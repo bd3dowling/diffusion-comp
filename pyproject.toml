@@ -1,0 +1,74 @@
+[tool.poetry]
+name = "diffusion"
+version = "0.1.0"
+description = "Code and notebooks related to diffusion modelling"
+authors = ["Ben Dowling <ben.dowling@icloud.com>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+numpy = "^1.26.2"
+matplotlib = "^3.8.2"
+
+[tool.poetry.group.dev.dependencies]
+ipykernel = "^6.27.1"
+jax = {extras = ["cpu"], version = "^0.4.20"}
+ruff = "^0.1.6"
+pytest = "^7.4.3"
+mypy = "^1.7.1"
+pylint = "^3.0.2"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.mypy]
+ignore_missing_imports = true
+strict = true
+
+[tool.ruff]
+
+# E - pycodestyle error
+# F - pyflakes
+# I - isort
+# N - pep8-naming
+# W - pycodestyle warn
+# UP - pyupgrade
+# TODO: D - pydocstyle
+select = ["E", "F", "I", "N", "W", "UP"]
+
+# N805 - invalid-first-argument-name-for-method
+ignore = ["N805"]
+
+# Match black
+line-length = 100
+
+[tool.pylint.main]
+# Include a hint for the correct naming format with invalid-name.
+include-naming-hint = true
+## extension-pkg-whitelist = []
+
+# Ignore docstrings and fixmes
+disable = [
+    "missing-module-docstring",
+    "missing-function-docstring",
+    "missing-class-docstring",
+    "fixme"
+]
+
+[tool.pylint.format]
+# Maximum number of characters on a single line.
+max-line-length = 100
+
+[tool.pylint.refactor]
+# too easily annoyed by adapter code
+disable = ["duplicate-code"]
+
+[tool.pylint.design]
+disable = ["too-few-public-methods"]
+
+[tool.pylint.typecheck]
+signature-mutators = [
+    "click.decorators.option",
+    "click.decorators.argument",
+]
