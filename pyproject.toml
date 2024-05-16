@@ -7,8 +7,12 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.10"
-numpy = "<1.26"
+numpy = "^1.26"
 matplotlib = "^3.8.2"
+seaborn = "^0.13.0"
+optax = "^0.1.7"
+flax = "^0.7.5"
+ffmpeg = "^1.4"
 
 [tool.poetry.group.dev.dependencies]
 ipykernel = "^6.27.1"
