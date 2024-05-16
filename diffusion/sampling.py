@@ -1,17 +1,15 @@
-from typing import Any
-
+import equinox as eqx
+import jax
 import jax.numpy as jnp
 import jax.random as random
 import numpy as np
-from flax.linen import Module
-from jax import Array
+from jaxtyping import Array, PRNGKeyArray
 
 
 def sample_with_time(
-    rng: Array,  # KeyArrray
+    rng: PRNGKeyArray,
     n_samples: int,
-    model: Module,
-    params: dict[str, Any],
+    model: eqx.Module,
     alpha_bar: Array,
     beta: Array,
 ) -> tuple[Array, Array]:
@@ -24,7 +22,7 @@ def sample_with_time(
     for i in range(len(beta)):
         beta_i = beta[-i]
         alpha_bar_i = alpha_bar[-i] * jnp.ones((noised_data.shape[0], 1))
-        noise_guess = model.apply(params, noised_data, alpha_bar_i)
+        noise_guess = jax.vmap(model)(noised_data, alpha_bar_i)
         rng, step_rng = random.split(rng)
         new_noise = random.normal(step_rng, noised_data.shape)
         noised_data: Array = (

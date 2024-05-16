@@ -11,8 +11,8 @@ numpy = "^1.26"
 matplotlib = "^3.8.2"
 seaborn = "^0.13.0"
 optax = "^0.1.7"
-flax = "^0.7.5"
 ffmpeg = "^1.4"
+equinox = "^0.11.4"
 
 [tool.poetry.group.dev.dependencies]
 ipykernel = "^6.27.1"
@@ -20,7 +20,9 @@ ruff = "^0.1.6"
 pytest = "^7.4.3"
 mypy = "^1.7.1"
 pylint = "^3.0.2"
-jax = {extras = ["cpu"], version = "<0.4.20"}
+
+[tool.poetry.group.cuda.dependencies]
+jax = {extras = ["cuda12"], version = "^0.4.28"}
 
 [build-system]
 requires = ["poetry-core"]
