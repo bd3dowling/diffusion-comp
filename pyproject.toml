@@ -14,6 +14,9 @@ optax = "^0.1.7"
 ffmpeg = "^1.4"
 equinox = "^0.11.4"
 
+[tool.poetry.group.dev]
+optional = true
+
 [tool.poetry.group.dev.dependencies]
 ipykernel = "^6.27.1"
 ruff = "^0.1.6"
@@ -21,8 +24,17 @@ pytest = "^7.4.3"
 mypy = "^1.7.1"
 pylint = "^3.0.2"
 
+[tool.poetry.group.cuda]
+optional = true
+
 [tool.poetry.group.cuda.dependencies]
 jax = {extras = ["cuda12"], version = "^0.4.28"}
+
+[tool.poetry.group.metal]
+optional = true
+
+[tool.poetry.group.metal.dependencies]
+jax-metal = "^0.0.7"
 
 [build-system]
 requires = ["poetry-core"]
