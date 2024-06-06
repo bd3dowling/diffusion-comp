@@ -18,7 +18,6 @@ equinox = "^0.11.4"
 optional = true
 
 [tool.poetry.group.dev.dependencies]
-ipykernel = "^6.27.1"
 ruff = "^0.1.6"
 pytest = "^7.4.3"
 mypy = "^1.7.1"
@@ -59,37 +58,3 @@ select = ["E", "F", "I", "N", "W", "UP"]
 ignore = ["N805"]
 
 line-length = 100
-
-[tool.ruff.per-file-ignores]
-# Ignore module level import not at top of file
-"notebooks/*.ipynb" = ["E402"]
-
-[tool.pylint.main]
-# Include a hint for the correct naming format with invalid-name.
-include-naming-hint = true
-## extension-pkg-whitelist = []
-
-# Ignore docstrings and fixmes
-disable = [
-    "missing-module-docstring",
-    "missing-function-docstring",
-    "missing-class-docstring",
-    "fixme"
-]
-
-[tool.pylint.format]
-# Maximum number of characters on a single line.
-max-line-length = 100
-
-[tool.pylint.refactor]
-# too easily annoyed by adapter code
-disable = ["duplicate-code"]
-
-[tool.pylint.design]
-disable = ["too-few-public-methods"]
-
-[tool.pylint.typecheck]
-signature-mutators = [
-    "click.decorators.option",
-    "click.decorators.argument",
-]
