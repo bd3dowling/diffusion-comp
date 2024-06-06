@@ -4,11 +4,25 @@ import jax.numpy as jnp
 import matplotlib.animation as animation
 import matplotlib.pyplot as plt
 import seaborn as sns
-from jax import Array, jit, vmap
+from jax import jit, vmap
+from jaxtyping import Array
 from matplotlib.animation import FuncAnimation
 from matplotlib.image import AxesImage
 
 CM = sns.color_palette("mako_r", as_cmap=True)
+
+
+def extract_and_expand(array: Array, time: Array, target: Array):
+    array = array[time].astype(jnp.float32)
+
+    # Expand dimensions to match the target array's number of dimensions
+    while array.ndim < target.ndim:
+        array = array[..., jnp.newaxis]  # Using jnp.newaxis to add a new last dimension
+
+    # Use broadcasting to expand the array dimensions to match the target
+    expanded_array = jnp.broadcast_to(array, target.shape)
+
+    return expanded_array
 
 
 def sample_sphere(num_points: int) -> Array:
