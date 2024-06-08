@@ -1,7 +1,7 @@
 [tool.poetry]
-name = "diffusion"
+name = "diffusionlib"
 version = "0.1.0"
-description = "Code and notebooks related to diffusion modelling"
+description = "Library for diffusion modelling and inverse problem solving"
 authors = ["Ben Dowling <ben.dowling@icloud.com>"]
 readme = "README.md"
 
