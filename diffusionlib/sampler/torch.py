@@ -209,6 +209,145 @@ class GaussianDiffusion:
 
             yield img, distance.item(), percent_complete
 
+    def tmpd_sample_loop(
+        self,
+        config,  # TODO: can probably remove this
+        model,
+        x_start,
+        measurement,
+        measurement_cond_fn,
+        record,
+        save_root,
+    ):
+        img = x_start
+        device = x_start.device
+
+        pbar = tqdm(list(range(self.num_timesteps))[::-1])
+        for idx in pbar:
+            time = torch.tensor([idx] * img.shape[0], device=device)
+
+            t = self._scale_timesteps(time)
+
+            img = img.requires_grad_()
+            # TODO: is time meant to be continuous time or a timestep check in each
+            # Need to define estimate_x_0 through the function
+            ratio = None
+            m = self.sqrt_alphas_cumprod[time]
+            v = self.sqrt_one_minus_alphas_cumprod[time] ** 2
+            ratio = v / m
+
+            def estimate_x_0(x_t):
+                model_output = model(x_t, self._scale_timesteps(time))
+                # In the case of "learned" variance, model will give twice channels.
+                if model_output.shape[1] == 2 * x_t.shape[1]:
+                    model_output, _ = torch.split(model_output, x_t.shape[1], dim=1)
+                # Need to extract correct eps
+                return self.mean_processor.predict_xstart(x_t, time, model_output)
+
+            x_0, distance = measurement_cond_fn(
+                img, measurement, estimate_x_0, ratio, v, config["noise"]["sigma"]
+            )
+
+            model_mean = self.mean_processor.q_posterior_mean(x_0, x_t=img, t=time)
+            _, model_log_variance = self.var_processor.get_variance(x_0, t=time)
+
+            sample = model_mean
+
+            noise = torch.randn_like(img)
+            if t != 0:  # no noise when t == 0
+                sample += torch.exp(0.5 * model_log_variance) * noise
+
+            img = sample
+            img = img.detach_()
+
+            pbar.set_postfix({"distance": distance.item()}, refresh=False)
+            if record:
+                if idx % 10 == 0:
+                    file_path = os.path.join(save_root, f"progress/x_{str(idx).zfill(4)}.png")
+                    plt.imsave(file_path, clear_color(img))
+
+        return img
+
+    def pigdm_sample_loop(
+        self,
+        config,  # TODO: can probably remove this
+        model,
+        x_start,
+        measurement,
+        measurement_cond_fn,
+        record,
+        save_root,
+    ):
+        img = x_start
+        device = x_start.device
+        eta = 1.0
+
+        pbar = tqdm(list(range(self.num_timesteps))[::-1])
+        for idx in pbar:
+            time = torch.tensor([idx] * img.shape[0], device=device)
+
+            t = self._scale_timesteps(time)
+
+            img = img.requires_grad_()
+            # TODO: is time meant to be continuous time or a timestep check in each
+            # Need to define estimate_x_0 through the function
+
+            m = self.sqrt_alphas_cumprod[time]
+            v = self.sqrt_one_minus_alphas_cumprod[time] ** 2
+            ratio = v / m
+
+            alpha_bar = extract_and_expand(self.alphas_cumprod, t, img)
+            alpha_bar_prev = extract_and_expand(self.alphas_cumprod_prev, t, img)
+            # coef1 = extract_and_expand(self.sqrt_one_minus_alphas_cumprod, t, img)
+            # coef2 = extract_and_expand(self.sqrt_alphas_cumprod, t, img)
+            coef1 = extract_and_expand(self.sqrt_recip_alphas_cumprod, t, img)
+            coef2 = extract_and_expand(self.sqrt_recipm1_alphas_cumprod, t, img)
+
+            sigma = (
+                eta
+                * torch.sqrt((1 - alpha_bar_prev) / (1 - alpha_bar))
+                * torch.sqrt(1 - alpha_bar / alpha_bar_prev)
+            )
+
+            def estimate_x_0(x_t):
+                model_output = model(x_t, self._scale_timesteps(time))
+                if model_output.shape[1] == 2 * x_t.shape[1]:
+                    model_output, _ = torch.split(model_output, x_t.shape[1], dim=1)
+                pred_xstart = self.mean_processor.process_xstart(
+                    self.mean_processor.predict_xstart(x_t, time, model_output)
+                )
+                eps = (coef1 * x_t - pred_xstart) / coef2
+                # eps = (x_t - coef2 * pred_xstart) / coef1
+                # In the case of "learned" variance, model will give twice channels.
+                # Need to extract correct eps
+                return pred_xstart, eps
+
+            x_0, eps, ls, distance = measurement_cond_fn(
+                img, measurement, estimate_x_0, ratio, v, config["noise"]["sigma"]
+            )
+
+            # Equation 12.
+            noise = torch.randn_like(img)
+            sample = (
+                x_0 * torch.sqrt(alpha_bar_prev)
+                + torch.sqrt(1 - alpha_bar_prev - sigma**2) * eps
+                + ls * torch.sqrt(alpha_bar)
+            )
+
+            if t != 0:  # no noise when t == 0
+                sample += sigma * noise
+
+            img = sample
+            img = img.detach_()
+
+            pbar.set_postfix({"distance": distance.item()}, refresh=False)
+            if record:
+                if idx % 10 == 0:
+                    file_path = os.path.join(save_root, f"progress/x_{str(idx).zfill(4)}.png")
+                    plt.imsave(file_path, clear_color(img))
+
+        return img
+
     def p_sample(self, model, x, t):
         raise NotImplementedError
 
