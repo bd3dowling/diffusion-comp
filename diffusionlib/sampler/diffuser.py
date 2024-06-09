@@ -7,9 +7,9 @@ import jax.random as rand
 from jax import lax
 from jaxtyping import Array, PRNGKeyArray
 
-from diffusionlib.mean_processor import MeanProcessor, MeanProcessorType
-from diffusionlib.utils import extract_and_expand
-from diffusionlib.variance_processor import VarianceProcessor, VarianceProcessorType
+from diffusionlib.mean_processor.jax import MeanProcessor, MeanProcessorType
+from diffusionlib.util.array import extract_and_expand
+from diffusionlib.variance_processor.jax import VarianceProcessor, VarianceProcessorType
 
 
 @dataclass

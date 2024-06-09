@@ -1,0 +1,6 @@
+[submodule "external/motionblur"]
+	path = external/motionblur
+	url = https://github.com/LeviBorodenko/motionblur
+[submodule "external/resizer"]
+	path = external/resizer
+	url = https://github.com/assafshocher/resizer

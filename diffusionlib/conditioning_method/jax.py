@@ -4,7 +4,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array
 
-from diffusionlib.measurement_operator import LinearOperator, NoiseOperator
+from diffusionlib.operator.jax import LinearOperator, NoiseOperator
 
 
 @dataclass
