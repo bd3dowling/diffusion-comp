@@ -1,11 +1,11 @@
 """Pydantic models for configs."""
 
-from importlib.resources import files
 from importlib.abc import Traversable
+from importlib.resources import files
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, PositiveInt
+from pydantic import BaseModel
 from strenum import StrEnum
 
 import config

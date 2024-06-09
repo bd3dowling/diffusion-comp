@@ -5,16 +5,17 @@ Useful references for understanding this code
 https://www.cl.cam.ac.uk/teaching/1011/R08/jpeg/acs10-jpeg.pdf JPEG tutorial Andrew B. Lewis
 CUED IIB 4F8: Image Coding 2019-2020 - Lecture 3: The DCT and the JPEG Standard J Lasenby Signal Processing Group, Engineering Department, Cambridge, UK
 """
-import numpy as np
+from glob import glob
+from typing import Callable, Optional
+
 import jax
 import jax.numpy as jnp
-from jax import vjp
-from torchvision.datasets import VisionDataset
-from typing import Callable, Optional
+import numpy as np
 import torchvision.transforms as transforms
-from torch.utils.data import DataLoader
-from glob import glob
+from jax import vjp
 from PIL import Image
+from torch.utils.data import DataLoader
+from torchvision.datasets import VisionDataset
 
 
 def dct1(x):
@@ -59,7 +60,7 @@ def dct(x, norm=None):
     W_real = jnp.cos(k)
     W_imag = jnp.sin(k)
     V = jnp.real(Vc) * W_real - jnp.imag(Vc) * W_imag
-    if norm == 'ortho':
+    if norm == "ortho":
         V = V.at[:, 0].set(V[:, 0] / (jnp.sqrt(N) * 2))
         V = V.at[:, 1:].set(V[:, 1:] / (jnp.sqrt(N / 2) * 2))
 
@@ -91,7 +92,7 @@ def idct(x, norm=None):
 
     X_v = x.reshape(-1, x_shape[-1]) / 2
 
-    if norm == 'ortho':
+    if norm == "ortho":
         X_v = X_v.at[:, 0].set(X_v[:, 0] * jnp.sqrt(N) * 2)
         X_v = X_v.at[:, 1:].set(X_v[:, 1:] * jnp.sqrt(N / 2) * 2)
 
@@ -107,8 +108,8 @@ def idct(x, norm=None):
     # assert 0
     v = jnp.fft.irfft(V, n=V.shape[1], axis=1)
     x = jnp.zeros_like(v)
-    x = x.at[:, ::2].set(x[:, ::2] + v[:, :N - (N // 2)])
-    x = x.at[:, 1::2].set(x[:, 1::2] + jnp.flip(v, axis=1)[:, :N // 2])
+    x = x.at[:, ::2].set(x[:, ::2] + v[:, : N - (N // 2)])
+    x = x.at[:, 1::2].set(x[:, 1::2] + jnp.flip(v, axis=1)[:, : N // 2])
     return x.reshape(x_shape)
 
 
@@ -187,19 +188,19 @@ def get_dct(in_features, _type, norm=None, bias=False):
     # initialise using dct function
     # I = torch.eye(in_features)
 
-    if _type == 'dct1':
+    if _type == "dct1":
         return dct1
         # return lambda x: dct1_test(x, norm=norm)
         # weight.data = dct1(I).data.t()
-    elif _type == 'idct1':
+    elif _type == "idct1":
         # return lambda x: idct1_test(x, norm=norm)
         return idct1
         # weight.data = idct1(I).data.t()
-    elif _type == 'dct':
+    elif _type == "dct":
         return lambda x: dct(x, norm=norm)
         # TODO: does it need transposing here? because of .t()?
         # weight.data = dct(I, norm=norm).data.t()
-    elif _type == 'idct':
+    elif _type == "idct":
         # return lambda x: idct_test(x, norm=norm)
         return lambda x: idct(x, norm=norm)
         # weight.data = idct(I, norm=norm).data.t()
@@ -247,27 +248,23 @@ def register_dataset(name: str):
             raise NameError(f"Name {name} is already registered!")
         __DATASET__[name] = cls
         return cls
+
     return wrapper
 
 
-def get_dataloader(dataset: VisionDataset,
-                   batch_size: int,
-                   num_workers: int,
-                   train: bool):
-    dataloader = DataLoader(dataset,
-                            batch_size,
-                            shuffle=train,
-                            num_workers=num_workers,
-                            drop_last=train)
+def get_dataloader(dataset: VisionDataset, batch_size: int, num_workers: int, train: bool):
+    dataloader = DataLoader(
+        dataset, batch_size, shuffle=train, num_workers=num_workers, drop_last=train
+    )
     return dataloader
 
 
-@register_dataset(name='ffhq')
+@register_dataset(name="ffhq")
 class FFHQDataset(VisionDataset):
-    def __init__(self, root: str, transforms: Optional[Callable]=None):
+    def __init__(self, root: str, transforms: Optional[Callable] = None):
         super().__init__(root, transforms)
 
-        self.fpaths = sorted(glob(root + '/**/*.png', recursive=True))
+        self.fpaths = sorted(glob(root + "/**/*.png", recursive=True))
         assert len(self.fpaths) > 0, "File list is empty. Check the root."
 
     def __len__(self):
@@ -275,7 +272,7 @@ class FFHQDataset(VisionDataset):
 
     def __getitem__(self, index: int):
         fpath = self.fpaths[index]
-        img = Image.open(fpath).convert('RGB')
+        img = Image.open(fpath).convert("RGB")
 
         if self.transforms is not None:
             img = self.transforms(img)
@@ -286,22 +283,24 @@ class FFHQDataset(VisionDataset):
 def image_grid(x, image_size, num_channels):
     img = x.reshape(-1, image_size, image_size, num_channels)
     w = int(np.sqrt(img.shape[0]))
-    img = img[:w**2, :, :, :]
-    return img.reshape((w, w, image_size, image_size, num_channels)).transpose((0, 2, 1, 3, 4)).reshape((w * image_size, w * image_size, num_channels))
+    img = img[: w**2, :, :, :]
+    return (
+        img.reshape((w, w, image_size, image_size, num_channels))
+        .transpose((0, 2, 1, 3, 4))
+        .reshape((w * image_size, w * image_size, num_channels))
+    )
 
 
 def get_asset_sample():
-  dataset = 'FFHQ'
-  batch_size = 4
-  transform = transforms.ToTensor()
-  dataset = get_dataset(dataset.lower(),
-                        root='../assets/',
-                        transforms=transform)
-  loader = get_dataloader(dataset, batch_size=3, num_workers=0, train=False)
-  ref_img = next(iter(loader))
-  ref_img = ref_img.detach().cpu().numpy()[2].transpose(1, 2, 0)
-  ref_img = np.tile(ref_img, (batch_size, 1, 1, 1))
-  return ref_img
+    dataset = "FFHQ"
+    batch_size = 4
+    transform = transforms.ToTensor()
+    dataset = get_dataset(dataset.lower(), root="../assets/", transforms=transform)
+    loader = get_dataloader(dataset, batch_size=3, num_workers=0, train=False)
+    ref_img = next(iter(loader))
+    ref_img = ref_img.detach().cpu().numpy()[2].transpose(1, 2, 0)
+    ref_img = np.tile(ref_img, (batch_size, 1, 1, 1))
+    return ref_img
 
 
 def jax_rgb2ycbcr(x):
@@ -311,7 +310,7 @@ def jax_rgb2ycbcr(x):
     # plt.imshow(image_grid(
     #     jnp.uint8(x), *shape[-2:]), interpolation='None')
     # plt.savefig("test_rgb.png")
-    v = jnp.array([[.299, .587, .114], [-.1687, -.3313, .5], [.5, -.4187, -.0813]])
+    v = jnp.array([[0.299, 0.587, 0.114], [-0.1687, -0.3313, 0.5], [0.5, -0.4187, -0.0813]])
     ycbcr = x.dot(v.T)
     ycbcr = ycbcr.at[:, :, :, 1:].set(ycbcr[:, :, :, 1:] + 128)
     # plt.imshow(image_grid(jnp.uint8(ycbcr.copy()), 256, 3), interpolation='None')
@@ -324,11 +323,14 @@ def jax_ycbcr2rgb(x):
     # plt.imshow(image_grid(jnp.uint8(x.copy()), 256, 3), interpolation='None')
     # plt.savefig("test_ycbcr_.png")
     v = np.array(
-      [[ 1.00000000e+00, -3.68199903e-05,  1.40198758e+00],
-       [ 1.00000000e+00, -3.44113281e-01, -7.14103821e-01],
-       [ 1.00000000e+00,  1.77197812e+00, -1.34583413e-04]])
+        [
+            [1.00000000e00, -3.68199903e-05, 1.40198758e00],
+            [1.00000000e00, -3.44113281e-01, -7.14103821e-01],
+            [1.00000000e00, 1.77197812e00, -1.34583413e-04],
+        ]
+    )
     rgb = x.astype(jnp.double)
-    rgb = rgb.at[:, :, :, 1:].set(rgb[:, :, :, 1:] - 128.)
+    rgb = rgb.at[:, :, :, 1:].set(rgb[:, :, :, 1:] - 128.0)
     rgb = rgb.dot(v.T)
     # plt.imshow(image_grid(jnp.uint8(rgb.copy()), 256, 3), interpolation='None')
     # plt.savefig("test_rgb_.png")
@@ -342,26 +344,142 @@ def chroma_subsample(x):
 
 
 def general_quant_matrix(quality_factor=10):
-    q1 = jnp.array([
-        16,  11,  10,  16,  24,  40,  51,  61,
-        12,  12,  14,  19,  26,  58,  60,  55,
-        14,  13,  16,  24,  40,  57,  69,  56,
-        14,  17,  22,  29,  51,  87,  80,  62,
-        18,  22,  37,  56,  68, 109, 103,  77,
-        24,  35,  55,  64,  81, 104, 113,  92,
-        49,  64,  78,  87, 103, 121, 120, 101,
-        72,  92,  95,  98, 112, 100, 103,  99
-        ])
-    q2 = jnp.array([
-        17,  18,  24,  47,  99,  99,  99,  99,
-        18,  21,  26,  66,  99,  99,  99,  99,
-        24,  26,  56,  99,  99,  99,  99,  99,
-        47,  66,  99,  99,  99,  99,  99,  99,
-        99,  99,  99,  99,  99,  99,  99,  99,
-        99,  99,  99,  99,  99,  99,  99,  99,
-        99,  99,  99,  99,  99,  99,  99,  99,
-        99,  99,  99,  99,  99,  99,  99,  99
-    ])
+    q1 = jnp.array(
+        [
+            16,
+            11,
+            10,
+            16,
+            24,
+            40,
+            51,
+            61,
+            12,
+            12,
+            14,
+            19,
+            26,
+            58,
+            60,
+            55,
+            14,
+            13,
+            16,
+            24,
+            40,
+            57,
+            69,
+            56,
+            14,
+            17,
+            22,
+            29,
+            51,
+            87,
+            80,
+            62,
+            18,
+            22,
+            37,
+            56,
+            68,
+            109,
+            103,
+            77,
+            24,
+            35,
+            55,
+            64,
+            81,
+            104,
+            113,
+            92,
+            49,
+            64,
+            78,
+            87,
+            103,
+            121,
+            120,
+            101,
+            72,
+            92,
+            95,
+            98,
+            112,
+            100,
+            103,
+            99,
+        ]
+    )
+    q2 = jnp.array(
+        [
+            17,
+            18,
+            24,
+            47,
+            99,
+            99,
+            99,
+            99,
+            18,
+            21,
+            26,
+            66,
+            99,
+            99,
+            99,
+            99,
+            24,
+            26,
+            56,
+            99,
+            99,
+            99,
+            99,
+            99,
+            47,
+            66,
+            99,
+            99,
+            99,
+            99,
+            99,
+            99,
+            99,
+            99,
+            99,
+            99,
+            99,
+            99,
+            99,
+            99,
+            99,
+            99,
+            99,
+            99,
+            99,
+            99,
+            99,
+            99,
+            99,
+            99,
+            99,
+            99,
+            99,
+            99,
+            99,
+            99,
+            99,
+            99,
+            99,
+            99,
+            99,
+            99,
+            99,
+            99,
+        ]
+    )
     s = (5000 / quality_factor) if quality_factor < 50 else (200 - 2 * quality_factor)
     q1 = jnp.floor((s * q1 + 50) / 100)
     q1 = jnp.where(q1 < 0, 0, q1)
@@ -381,18 +499,18 @@ def quantization_matrix(quality_factor):
 
 
 def image_to_patches(x):
-    return jax.lax.conv_general_dilated_patches(lhs=x, filter_shape=[8, 8], padding='SAME', window_strides=[8, 8])
+    return jax.lax.conv_general_dilated_patches(
+        lhs=x, filter_shape=[8, 8], padding="SAME", window_strides=[8, 8]
+    )
 
 
 def get_patches_to_images(shape):
     num_batch, image_size, _, num_channels = shape
     assert num_channels == 3
     x_luma = jnp.ones((num_batch, 1, image_size, image_size))
-    x_chroma = jnp.ones((num_batch, 2, image_size//2, image_size//2))
-    x_luma, patches_to_image_luma = vjp(
-        image_to_patches, x_luma)
-    x_chroma, patches_to_image_chroma = vjp(
-        image_to_patches, x_chroma)
+    x_chroma = jnp.ones((num_batch, 2, image_size // 2, image_size // 2))
+    x_luma, patches_to_image_luma = vjp(image_to_patches, x_luma)
+    x_chroma, patches_to_image_chroma = vjp(image_to_patches, x_chroma)
     return patches_to_image_luma, patches_to_image_chroma
 
 
@@ -418,9 +536,9 @@ def jpeg_encode(x, quality_factor, patches_to_image_luma, patches_to_image_chrom
     x_chroma = x_chroma.reshape(x_chroma.shape[0], x_chroma.shape[1], -1)
     x_luma = x_luma.transpose(0, 2, 1)
     x_chroma = x_chroma.transpose(0, 2, 1)
-    x_luma = x_luma.reshape(-1, 8, 8) - 128.
-    x_chroma = x_chroma.reshape(-1, 8, 8) - 128.
-    dct_layer = get_dct(8, 'dct', norm='ortho')
+    x_luma = x_luma.reshape(-1, 8, 8) - 128.0
+    x_chroma = x_chroma.reshape(-1, 8, 8) - 128.0
+    dct_layer = get_dct(8, "dct", norm="ortho")
     x_luma = apply_linear_2d(x_luma, dct_layer)
     x_chroma = apply_linear_2d(x_chroma, dct_layer)
     x_luma = x_luma.reshape(-1, 1, 8, 8)
@@ -445,11 +563,19 @@ def jpeg_decode(x, quality_factor, patches_to_image_luma, patches_to_image_chrom
     x_chroma = x_chroma * q2.reshape(1, 8, 8)
     x_luma = x_luma.reshape(-1, 8, 8)
     x_chroma = x_chroma.reshape(-1, 8, 8)
-    dct_layer = get_dct(8, 'idct', norm='ortho')
+    dct_layer = get_dct(8, "idct", norm="ortho")
     x_luma = apply_linear_2d(x_luma, dct_layer)
     x_chroma = apply_linear_2d(x_chroma, dct_layer)
-    x_luma = (x_luma + 128).reshape(num_batch, image_size//8, image_size//8, 64).transpose(0, 3, 1, 2)
-    x_chroma = (x_chroma + 128).reshape(num_batch, image_size//16, image_size//16, 64 * 2).transpose(0, 3, 1, 2)
+    x_luma = (
+        (x_luma + 128)
+        .reshape(num_batch, image_size // 8, image_size // 8, 64)
+        .transpose(0, 3, 1, 2)
+    )
+    x_chroma = (
+        (x_chroma + 128)
+        .reshape(num_batch, image_size // 16, image_size // 16, 64 * 2)
+        .transpose(0, 3, 1, 2)
+    )
     x_luma = patches_to_image_luma(x_luma)[0]
     x_chroma = patches_to_image_chroma(x_chroma)[0]
     x_chroma_repeated = jnp.zeros((num_batch, 2, image_size, image_size))
@@ -474,15 +600,15 @@ def jpeg_decode(x, quality_factor, patches_to_image_luma, patches_to_image_chrom
 
 def quantization_encode(x, quality_factor):
     quality_factor = 32
-    #to int
+    # to int
     x = (x + 1) / 2
     x = x * 255
     x = x.int()
     # quantize
     x = x // quality_factor
-    #to float
+    # to float
     x = x.float()
-    x = x / (255/quality_factor)
+    x = x / (255 / quality_factor)
     x = (x * 2) - 1
     return x
 

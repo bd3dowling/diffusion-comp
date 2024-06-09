@@ -1,15 +1,14 @@
 """Utility functions for working with images."""
 
-from PIL import Image
-
+import matplotlib.pyplot as plt
 import numpy as np
-import torch
 import scipy
+import torch
 import torch.nn.functional as F
+from fastmri.fftc import fft2c_new, ifft2c_new
+from PIL import Image
 from torch import nn
 from torch.autograd import Variable
-import matplotlib.pyplot as plt
-from fastmri.fftc import fft2c_new, ifft2c_new
 
 from external.motionblur import Kernel
 
@@ -448,8 +447,8 @@ def extract_image_patches(images, ksizes, strides, rates, padding="same"):
         pass
     else:
         raise NotImplementedError(
-            'Unsupported padding type: {}.\
-                Only "same" or "valid" are supported.'.format(padding)
+            f'Unsupported padding type: {padding}.\
+                Only "same" or "valid" are supported.'
         )
 
     unfold = torch.nn.Unfold(kernel_size=ksizes, dilation=rates, padding=0, stride=strides)

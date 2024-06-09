@@ -37,6 +37,7 @@ def sample_with_time(
 
     return noised_data, all_outputs
 
+
 def cond_sample_with_time(
     rng: PRNGKeyArray,
     n_samples: int,
@@ -57,10 +58,14 @@ def cond_sample_with_time(
         rng, step_rng = random.split(rng)
         new_noise = random.normal(step_rng, noised_data.shape)
         noised_data = (
-            1
-            / (1 - beta_i) ** 0.5
-            * (noised_data - beta_i / (1 - alpha_bar_i) ** 0.5 * noise_guess)
-        ).at[:, 1].set(0)
+            (
+                1
+                / (1 - beta_i) ** 0.5
+                * (noised_data - beta_i / (1 - alpha_bar_i) ** 0.5 * noise_guess)
+            )
+            .at[:, 1]
+            .set(0)
+        )
         if i < len(beta) - 1:
             noised_data += beta_i**0.5 * new_noise
 

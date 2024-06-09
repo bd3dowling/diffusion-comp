@@ -6,7 +6,7 @@ def get_config():
     config = get_default_configs()
     # training
     training = config.training
-    training.sde = 'vpsde'
+    training.sde = "vpsde"
     # training.sde = 'vesde'
     training.n_iters = 4000
     training.batch_size = 8
@@ -47,20 +47,20 @@ def get_config():
     model.beta_max = 25.0  # 200 also works, depends on time step size
     # for ve
     model.sigma_min = 0.01
-    model.sigma_max = 10.
+    model.sigma_max = 10.0
 
     # solver
     solver = config.solver
     solver.num_outer_steps = 1000
     # solver.outer_solver = 'EulerMaruyama'
-    solver.outer_solver = 'DDIMVP'
+    solver.outer_solver = "DDIMVP"
     solver.eta = 1.0
     # solver.outer_solver = 'SMLD'
     solver.inner_solver = None
 
     # optim
     optim = config.optim
-    optim.optimizer = 'Adam'
+    optim.optimizer = "Adam"
     optim.lr = 1e-3
     optim.warmup = False
     optim.weight_decay = False

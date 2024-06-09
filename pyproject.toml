@@ -86,3 +86,7 @@ select = ["E", "F", "I", "N", "W", "UP"]
 ignore = ["N805"]
 
 line-length = 100
+
+exclude = [
+    "external/"
+]

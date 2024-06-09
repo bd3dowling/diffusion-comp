@@ -24,6 +24,7 @@ def plot_heatmap(samples, area_bounds, lengthscale=350.0):
     Args:
       samples: locations of particles shape (num_particles, 2)
     """
+
     def small_kernel(z, area_bounds):
         a = jnp.linspace(area_bounds[0], area_bounds[1], 512)
         x, y = jnp.meshgrid(a, a)
@@ -142,61 +143,91 @@ def plot_temperature_schedule(sde, solver):
     plt.close()
 
 
-def plot_single_image(noise_std, dim, dim_y, timesteps, i, name, indices, samples, color=color_algorithm):
+def plot_single_image(
+    noise_std, dim, dim_y, timesteps, i, name, indices, samples, color=color_algorithm
+):
     fig, ax = plt.subplots(1, 1, figsize=(4, 4))
-    ax.scatter(*samples[:, indices].T, alpha=.5, color=color, edgecolors="black", rasterized=True)
+    ax.scatter(*samples[:, indices].T, alpha=0.5, color=color, edgecolors="black", rasterized=True)
     ax.set_xticks([])
     ax.set_yticks([])
     ax.set_xlim([-22, 22])
     ax.set_ylim([-22, 22])
-    fig.subplots_adjust(left=.005, right=.995,
-                        bottom=.005, top=.995)
+    fig.subplots_adjust(left=0.005, right=0.995, bottom=0.005, top=0.995)
     plt.savefig(
-        'inverse_problem_comparison_out_dist_{}_{}_{}_{}_{}_{}.pdf'.format(noise_std, dim, dim_y, timesteps, i, name), dpi=dpi_val)
+        f"inverse_problem_comparison_out_dist_{noise_std}_{dim}_{dim_y}_{timesteps}_{i}_{name}.pdf",
+        dpi=dpi_val,
+    )
     plt.savefig(
-        'inverse_problem_comparison_out_dist_{}_{}_{}_{}_{}_{}.png'.format(noise_std, dim, dim_y, timesteps, i, name), transparent=True, dpi=dpi_val)
+        f"inverse_problem_comparison_out_dist_{noise_std}_{dim}_{dim_y}_{timesteps}_{i}_{name}.png",
+        transparent=True,
+        dpi=dpi_val,
+    )
     plt.close(fig)
 
 
-def plot_image(noise_std, dim, dim_y, timesteps, i, name, indices, diffusion_samples, target_samples=None):
+def plot_image(
+    noise_std, dim, dim_y, timesteps, i, name, indices, diffusion_samples, target_samples=None
+):
     fig, ax = plt.subplots(1, 1, figsize=(4, 4))
-    ax.scatter(*target_samples[:, indices].T, alpha=.5, color=color_posterior, edgecolors= "black", rasterized=True)
-    ax.scatter(*diffusion_samples[:, indices].T, alpha=.5, color=color_algorithm, edgecolors="black", rasterized=True)
+    ax.scatter(
+        *target_samples[:, indices].T,
+        alpha=0.5,
+        color=color_posterior,
+        edgecolors="black",
+        rasterized=True,
+    )
+    ax.scatter(
+        *diffusion_samples[:, indices].T,
+        alpha=0.5,
+        color=color_algorithm,
+        edgecolors="black",
+        rasterized=True,
+    )
     ax.set_xticks([])
     ax.set_yticks([])
     ax.set_xlim([-22, 22])
     ax.set_ylim([-22, 22])
-    fig.subplots_adjust(left=.005, right=.995,
-                        bottom=.005, top=.995)
+    fig.subplots_adjust(left=0.005, right=0.995, bottom=0.005, top=0.995)
     plt.savefig(
-        'inverse_problem_comparison_out_dist_{}_{}_{}_{}_{}_{}.pdf'.format(noise_std, dim, dim_y, timesteps, i, name), dpi=dpi_val)
+        f"inverse_problem_comparison_out_dist_{noise_std}_{dim}_{dim_y}_{timesteps}_{i}_{name}.pdf",
+        dpi=dpi_val,
+    )
     plt.savefig(
-        'inverse_problem_comparison_out_dist_{}_{}_{}_{}_{}_{}.png'.format(noise_std, dim, dim_y, timesteps, i, name), transparent=True, dpi=dpi_val)
+        f"inverse_problem_comparison_out_dist_{noise_std}_{dim}_{dim_y}_{timesteps}_{i}_{name}.png",
+        transparent=True,
+        dpi=dpi_val,
+    )
     plt.close(fig)
 
 
 def sliced_wasserstein(rng, dist_1, dist_2, n_slices=100):
     projections = random.normal(rng, (n_slices, dist_1.shape[1]))
     projections = projections / jnp.linalg.norm(projections, axis=-1)[:, None]
-    dist_1_projected = (projections @ dist_1.T)
-    dist_2_projected = (projections @ dist_2.T)
-    return np.mean([wasserstein_distance(u_values=d1, v_values=d2) for d1, d2 in zip(dist_1_projected, dist_2_projected)])
+    dist_1_projected = projections @ dist_1.T
+    dist_2_projected = projections @ dist_2.T
+    return np.mean(
+        [
+            wasserstein_distance(u_values=d1, v_values=d2)
+            for d1, d2 in zip(dist_1_projected, dist_2_projected)
+        ]
+    )
 
 
 def Wasserstein2(m1, C1, m2, C2):
     C1_half = scipy.linalg.sqrtm(C1)
-    C_half = jnp.asarray(np.asarray(np.real(scipy.linalg.sqrtm(C1_half @ C2 @ C1_half)), dtype=float))
-    return jnp.linalg.norm(m1 - m2)**2 + jnp.trace(C1) + jnp.trace(C2) - 2 * jnp.trace(C_half)
+    C_half = jnp.asarray(
+        np.asarray(np.real(scipy.linalg.sqrtm(C1_half @ C2 @ C1_half)), dtype=float)
+    )
+    return jnp.linalg.norm(m1 - m2) ** 2 + jnp.trace(C1) + jnp.trace(C2) - 2 * jnp.trace(C_half)
 
 
 def Distance2(m1, C1, m2, C2):
     C2_half = jnp.linalg.cholesky(C2)
     C1_half = jnp.linalg.cholesky(C1)
-    return jnp.linalg.norm(m1 - m2)**2 + jnp.linalg.norm(C1_half - C2_half)**2
+    return jnp.linalg.norm(m1 - m2) ** 2 + jnp.linalg.norm(C1_half - C2_half) ** 2
 
 
-def plot(train_data, test_data, mean, variance,
-         fname="plot.png"):
+def plot(train_data, test_data, mean, variance, fname="plot.png"):
     X, y = train_data
     X_show, f_show, variance_show = test_data
     # Plot result
@@ -205,17 +236,25 @@ def plot(train_data, test_data, mean, variance,
     ax.plot(X_show, mean, label="Prediction", linestyle="--", color="blue")
     ax.scatter(X, y, label="Observations", color="black", s=20)
     ax.fill_between(
-        X_show.flatten(), mean - 2. * jnp.sqrt(variance),
-        mean + 2. * jnp.sqrt(variance), alpha=FG_ALPHA, color="blue")
+        X_show.flatten(),
+        mean - 2.0 * jnp.sqrt(variance),
+        mean + 2.0 * jnp.sqrt(variance),
+        alpha=FG_ALPHA,
+        color="blue",
+    )
     ax.fill_between(
-        X_show.flatten(), f_show - 2. * jnp.sqrt(variance_show),
-        f_show + 2. * jnp.sqrt(variance_show), alpha=FG_ALPHA, color="orange")
+        X_show.flatten(),
+        f_show - 2.0 * jnp.sqrt(variance_show),
+        f_show + 2.0 * jnp.sqrt(variance_show),
+        alpha=FG_ALPHA,
+        color="orange",
+    )
     ax.set_xlim((X_show[0], X_show[-1]))
     ax.set_ylim((-2.4, 2.4))
-    ax.grid(visible=True, which='major', linestyle='-')
-    ax.set_xlabel('x', fontsize=10)
-    ax.set_ylabel('y', fontsize=10)
-    fig.patch.set_facecolor('white')
+    ax.grid(visible=True, which="major", linestyle="-")
+    ax.set_xlabel("x", fontsize=10)
+    ax.set_ylabel("y", fontsize=10)
+    fig.patch.set_facecolor("white")
     fig.patch.set_alpha(BG_ALPHA)
     ax.patch.set_alpha(MG_ALPHA)
     ax.legend()

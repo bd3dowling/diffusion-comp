@@ -25,19 +25,19 @@ def get_default_configs():
 
     # sampling
     config.sampling = sampling = ml_collections.ConfigDict()
-    sampling.method = 'pc'
-    sampling.predictor = 'reverse_diffusion'
-    sampling.corrector = 'langevin'
+    sampling.method = "pc"
+    sampling.predictor = "reverse_diffusion"
+    sampling.corrector = "langevin"
     sampling.n_steps_each = 1
     sampling.noise_removal = True
     sampling.probability_flow = False
     sampling.snr = 0.206  # A hyperparameter of the corrector
     sampling.projection_sigma_rate = 1.586
-    sampling.cs_solver = 'projection'
+    sampling.cs_solver = "projection"
     sampling.expansion = 4
-    sampling.coeff = 1.
+    sampling.coeff = 1.0
     sampling.n_projections = 23
-    sampling.task = 'ct'
+    sampling.task = "ct"
     sampling.lambd = 0.5
     sampling.denoise_override = True
     sampling.stack_samples = False
@@ -50,7 +50,7 @@ def get_default_configs():
     evaluate.num_samples = 50000
     evaluate.enable_loss = True
     evaluate.enable_bpd = False
-    evaluate.bpd_dataset = 'test'
+    evaluate.bpd_dataset = "test"
 
     # data
     config.data = data = ml_collections.ConfigDict()
@@ -61,20 +61,20 @@ def get_default_configs():
 
     # model
     config.model = model = ml_collections.ConfigDict()
-    model.name = 'mlp'
-    model.sigma_max = 378.
+    model.name = "mlp"
+    model.sigma_max = 378.0
     model.sigma_min = 0.01
     model.num_scales = 1000
     model.beta_min = 0.1
-    model.beta_max = 20.
-    model.dropout = 0.
-    model.embedding_type = 'fourier'
+    model.beta_max = 20.0
+    model.dropout = 0.0
+    model.embedding_type = "fourier"
 
     # solver
     config.solver = solver = ml_collections.ConfigDict()
     config.solver.num_outer_steps = 1000
     config.solver.num_inner_steps = 1
-    config.solver.outer_solver = 'EulerMaruyama'
+    config.solver.outer_solver = "EulerMaruyama"
     config.solver.dt = None
     config.solver.epsilon = None
     config.solver.inner_solver = None
@@ -83,12 +83,12 @@ def get_default_configs():
     # optimization
     config.optim = optim = ml_collections.ConfigDict()
     optim.weight_decay = 0
-    optim.optimizer = 'Adam'
+    optim.optimizer = "Adam"
     optim.lr = 2e-4
     optim.beta1 = 0.9
     optim.eps = 1e-8
     optim.warmup = 5000
-    optim.grad_clip = 1.
+    optim.grad_clip = 1.0
 
     config.seed = 42
 

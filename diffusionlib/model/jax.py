@@ -1,13 +1,11 @@
 import equinox as eqx
+import flax.linen as nn
 import jax
 import jax.numpy as jnp
 import jax.random as random
+import numpy as np
 from jaxtyping import Array, Float, PRNGKeyArray, PyTree
 from optax import GradientTransformation
-
-import flax.linen as nn
-import jax.numpy as jnp
-import numpy as np
 
 
 class MLP(nn.Module):

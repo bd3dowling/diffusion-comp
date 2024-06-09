@@ -2,9 +2,9 @@
 
 from abc import ABC, abstractmethod
 
+import functorch
 import torch
 from strenum import StrEnum
-import functorch
 
 __CONDITIONING_METHOD__ = {}
 
@@ -130,8 +130,7 @@ class PosteriorSamplingPlus(ConditioningMethod_):
         return x_t, norm
 
 
-
-@register_conditioning_method(name='pig')
+@register_conditioning_method(name="pig")
 class PsuedoInverseGuided(ConditioningMethod_):
     def __init__(self, operator, noiser, **kwargs):
         """
@@ -148,19 +147,18 @@ class PsuedoInverseGuided(ConditioningMethod_):
         that are not shown in the examples in the publication.
         """
         super().__init__(operator, noiser)
-        self.num_sampling = kwargs.get('num_sampling', 5)
-        self.scale = kwargs.get('scale', 1.0)
+        self.num_sampling = kwargs.get("num_sampling", 5)
+        self.scale = kwargs.get("scale", 1.0)
 
     def conditioning(self, x_t, measurement, estimate_x_0, r, v, noise_std, **kwargs):
-
         def estimate_h_x_0(x_t):
             x_0, eps = estimate_x_0(x_t)
             return self.operator.forward(x_0, **kwargs), (x_0, eps)
 
-        if self.noiser.__name__ == 'gaussian':
-            h_x_0, vjp_estimate_h_x_0, (x_0, eps)  = functorch.vjp(estimate_h_x_0, x_t, has_aux=True)
+        if self.noiser.__name__ == "gaussian":
+            h_x_0, vjp_estimate_h_x_0, (x_0, eps) = functorch.vjp(estimate_h_x_0, x_t, has_aux=True)
             r = v * self.scale / (v + self.scale)
-            C_yy = 1. + noise_std**2 / r
+            C_yy = 1.0 + noise_std**2 / r
             difference = measurement - h_x_0
             norm = torch.linalg.norm(difference)
             ls = vjp_estimate_h_x_0(difference / C_yy)[0]
@@ -171,29 +169,29 @@ class PsuedoInverseGuided(ConditioningMethod_):
         return x_0, eps, ls, norm
 
 
-@register_conditioning_method(name='altpig')
+@register_conditioning_method(name="altpig")
 class AltPsuedoInverseGuided(ConditioningMethod_):
     """
     NOTE: To be used with `tmpdtorch.gaussian_diffusion.tmpd_sample_loop`.
     NOTE: An alternative implementation of PiGDM that is more numerically stable, and does not require
     clipping, although different in some aspects to the authors' Algorithm 1 in that it more closely
-    follows the TMPD algorithm. 
+    follows the TMPD algorithm.
     """
+
     def __init__(self, operator, noiser, **kwargs):
         super().__init__(operator, noiser)
-        self.num_sampling = kwargs.get('num_sampling', 5)
-        self.scale = kwargs.get('scale', 1.0)
+        self.num_sampling = kwargs.get("num_sampling", 5)
+        self.scale = kwargs.get("scale", 1.0)
 
     def conditioning(self, x_t, measurement, estimate_x_0, r, v, noise_std, **kwargs):
-
         def estimate_h_x_0(x_t):
             x_0 = estimate_x_0(x_t)
             return self.operator.forward(x_0, **kwargs), x_0
 
-        if self.noiser.__name__ == 'gaussian':
+        if self.noiser.__name__ == "gaussian":
             h_x_0, vjp_estimate_h_x_0, x_0 = functorch.vjp(estimate_h_x_0, x_t, has_aux=True)
             r = v * self.scale / (v + self.scale)
-            C_yy = 1. + noise_std**2 / r
+            C_yy = 1.0 + noise_std**2 / r
             difference = measurement - h_x_0
             norm = torch.linalg.norm(difference)
             ls = vjp_estimate_h_x_0(difference / C_yy)[0]
@@ -205,23 +203,22 @@ class AltPsuedoInverseGuided(ConditioningMethod_):
         return x_0, norm
 
 
-@register_conditioning_method(name='tmp')
+@register_conditioning_method(name="tmp")
 class TweedieMomentProjection(ConditioningMethod_):
     def __init__(self, operator, noiser, **kwargs):
         super().__init__(operator, noiser)
-        self.num_sampling = kwargs.get('num_sampling', 5)
+        self.num_sampling = kwargs.get("num_sampling", 5)
         # self.scale = kwargs.get('scale', 1.0)
 
     def conditioning(self, x_t, measurement, estimate_x_0, r, v, noise_std, **kwargs):
-
         def estimate_h_x_0(x_t):
             x_0 = estimate_x_0(x_t)
             return self.operator.forward(x_0, **kwargs), x_0
             # return self.operator.forward(x_0, **kwargs)
 
-        if self.noiser.__name__ == 'gaussian':
+        if self.noiser.__name__ == "gaussian":
             # Due to the structure of this code, the condition operator is not accesible unless inside from in the conditioning method. That's why the analysis is here
-            # Since functorch 1.1.1 is not compatible with this 
+            # Since functorch 1.1.1 is not compatible with this
             # functorch 0.1.1 (unstable; works with PyTorch 1.11) does not work with autograd.Function, which is what the model is written in. It can be rewritten, or package environment needs to be solved.
             # h_x_0, vjp = torch.autograd.functional.vjp(estimate_h_x_0, x_t, self.operator.forward(torch.ones_like(x_t), **kwargs))
             # difference = measurement - h_x_0
@@ -237,7 +234,13 @@ class TweedieMomentProjection(ConditioningMethod_):
             # print(h_x_0.shape)
             # print(x_0.shape)
             # y = self.operator.forward(torch.ones_like(x_0), **kwargs)
-            C_yy = self.operator.forward(vjp_estimate_h_x_0(self.operator.forward(torch.ones_like(x_0), **kwargs))[0], **kwargs) + noise_std**2 / r
+            C_yy = (
+                self.operator.forward(
+                    vjp_estimate_h_x_0(self.operator.forward(torch.ones_like(x_0), **kwargs))[0],
+                    **kwargs,
+                )
+                + noise_std**2 / r
+            )
             difference = measurement - h_x_0
             norm = torch.linalg.norm(difference)
             ls = vjp_estimate_h_x_0(difference / C_yy)[0]

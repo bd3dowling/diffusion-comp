@@ -36,14 +36,14 @@ def get_config():
     # sampling.cs_method = 'kpddpm'
     # sampling.cs_method = 'kpddpmplus'
     # sampling.cs_method = 'kpsmld'
-    sampling.cs_method = 'kpsmldplus'
+    sampling.cs_method = "kpsmldplus"
 
     eval.pmap = True
     data.image_size = 32
     data.num_channels = 1
     eval.batch_size = 1
 
-    training.sde = 'vpsde'
+    training.sde = "vpsde"
     training.num_epochs = 4000
     training.batch_size = 16
 
@@ -53,10 +53,10 @@ def get_config():
     sampling.inverse_scaler = None
 
     model.beta_min = 0.01
-    model.beta_max = 25.
+    model.beta_max = 25.0
 
     solver.num_outer_steps = 1000
-    solver.outer_solver = 'EulerMaruyama'
+    solver.outer_solver = "EulerMaruyama"
     solver.inner_solver = None
 
     # optim

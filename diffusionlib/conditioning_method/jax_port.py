@@ -1,9 +1,9 @@
 from dataclasses import dataclass
 
-import diffusionlib.conditioning_method.jax_port as jax_port
 import jax.numpy as jnp
 from jaxtyping import Array
 
+import diffusionlib.conditioning_method.jax_port as jax_port
 from diffusionlib.operator.jax import LinearOperator, NoiseOperator
 
 
