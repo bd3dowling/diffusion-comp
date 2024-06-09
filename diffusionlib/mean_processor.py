@@ -8,7 +8,7 @@ import jax.numpy as jnp
 from jaxtyping import Array
 from strenum import StrEnum
 
-from diffusion.utils import extract_and_expand
+from diffusionlib.utils import extract_and_expand
 
 __MODEL_MEAN_PROCESSOR__: dict[MeanProcessorType, type[MeanProcessor]] = {}
 

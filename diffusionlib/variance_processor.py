@@ -8,7 +8,7 @@ import jax.numpy as jnp
 from jaxtyping import Array
 from strenum import StrEnum
 
-from diffusion.utils import extract_and_expand
+from diffusionlib.utils import extract_and_expand
 
 __MODEL_VAR_PROCESSOR__: dict[VarianceProcessorType, type[VarianceProcessor]] = {}
 
