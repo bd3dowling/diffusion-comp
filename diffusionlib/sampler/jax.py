@@ -462,7 +462,7 @@ class DDIMVE(Solver):
         return x, x_mean
 
 
-# FROM TMPD
+# FROM diffusionlib
 
 
 def batch_dot(a, b):

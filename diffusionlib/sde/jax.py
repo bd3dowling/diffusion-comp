@@ -1,7 +1,8 @@
 """SDE class."""
 import jax.numpy as jnp
-from diffusion.utils import batch_mul, get_linear_beta_function, get_sigma_function
 from jax import random, vmap
+
+from diffusionlib.util.misc import batch_mul, get_linear_beta_function, get_sigma_function
 
 
 def ulangevin(score, x, t):

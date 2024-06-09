@@ -1,6 +1,6 @@
 """Utility functions related to Bayesian inversion."""
 import jax.numpy as jnp
-from diffusion.utils import (
+from diffusionlib.utils import (
     batch_linalg_solve,
     batch_linalg_solve_A,
     batch_matmul,

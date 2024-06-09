@@ -10,7 +10,7 @@ from PIL import Image
 from torch import nn
 from torch.autograd import Variable
 
-from external.motionblur import Kernel
+from external.motionblur.motionblur import Kernel
 
 
 def fft2(x):

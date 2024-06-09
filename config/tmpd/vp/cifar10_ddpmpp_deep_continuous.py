@@ -66,8 +66,8 @@ def get_config():
     # optim
     config.seed = 2023
 
-    sampling.cs_method = "TMPD2023bvjpplus"
-    # sampling.cs_method = 'TMPD2023bvjp'
+    sampling.cs_method = "diffusionlib2023bvjpplus"
+    # sampling.cs_method = 'diffusionlib2023bvjp'
 
     sampling.stack_samples = False
     sampling.noise_std = 0.1

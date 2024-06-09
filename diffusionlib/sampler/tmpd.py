@@ -2,7 +2,10 @@
 from functools import partial
 
 import jax.numpy as jnp
-from diffusionjax.inverse_problems import (
+from jax import random
+from jax.lax import scan
+
+from diffusionlib.conditioning_method.jax import (
     get_diag_jacfwd_guidance,
     get_diag_jacrev_guidance,
     get_diag_vjp_guidance,
@@ -14,17 +17,8 @@ from diffusionjax.inverse_problems import (
     get_vjp_guidance,
     get_vjp_guidance_mask,
 )
-from diffusionjax.solvers import EulerMaruyama
-from diffusionjax.utils import (
-    get_linear_beta_function,
-    get_sampler,
-    get_sigma_function,
-    get_times,
-    shared_update,
-)
-from jax import random
-from jax.lax import scan
-from tmpd.solvers import (
+from diffusionlib.sampler.jax import EulerMaruyama
+from diffusionlib.sampler.tmpd import (
     DPSDDPM,
     DPSSMLD,
     KGDMVE,
@@ -47,6 +41,13 @@ from tmpd.solvers import (
     PiGDMVPplus,
     ReproducePiGDMVP,
     ReproducePiGDMVPplus,
+)
+from diffusionlib.util.misc import (
+    get_linear_beta_function,
+    get_sampler,
+    get_sigma_function,
+    get_times,
+    shared_update,
 )
 
 
@@ -136,7 +137,7 @@ def get_cs_sampler(
             stack_samples=stack_samples,
             denoise=True,
         )
-    elif config.sampling.cs_method.lower() == "tmpd2023avjp":
+    elif config.sampling.cs_method.lower() == "diffusionlib2023avjp":
         sampler = get_sampler(
             sampling_shape,
             EulerMaruyama(
@@ -148,7 +149,7 @@ def get_cs_sampler(
             stack_samples=stack_samples,
             denoise=True,
         )
-    elif config.sampling.cs_method.lower() == "tmpd2023ajacfwd":
+    elif config.sampling.cs_method.lower() == "diffusionlib2023ajacfwd":
         sampler = get_sampler(
             sampling_shape,
             EulerMaruyama(
@@ -165,8 +166,8 @@ def get_cs_sampler(
             denoise=True,
         )
     elif (
-        config.sampling.cs_method.lower() == "tmpd2023ajacrev"
-        or config.sampling.cs_method.lower() == "tmpd2023ajacrevplus"
+        config.sampling.cs_method.lower() == "diffusionlib2023ajacrev"
+        or config.sampling.cs_method.lower() == "diffusionlib2023ajacrevplus"
     ):
         sampler = get_sampler(
             sampling_shape,
@@ -184,7 +185,7 @@ def get_cs_sampler(
             denoise=True,
         )
     elif (
-        config.sampling.cs_method.lower() == "tmpd2023b"
+        config.sampling.cs_method.lower() == "diffusionlib2023b"
     ):  # This vmaps across calculating N_y vjps, so is O(num_samples * num_y * prod(shape)) in memory
         sampler = get_sampler(
             sampling_shape,
@@ -202,7 +203,7 @@ def get_cs_sampler(
             denoise=True,
         )
     elif (
-        config.sampling.cs_method.lower() == "tmpd2023bjacfwd"
+        config.sampling.cs_method.lower() == "diffusionlib2023bjacfwd"
     ):  # This vmaps across calculating N_y vjps, so is O(num_samples * num_y * prod(shape)) in memory
         sampler = get_sampler(
             sampling_shape,
@@ -220,7 +221,7 @@ def get_cs_sampler(
             denoise=True,
         )
     elif (
-        config.sampling.cs_method.lower() == "tmpd2023bvjp"
+        config.sampling.cs_method.lower() == "diffusionlib2023bvjp"
     ):  # This vmaps across calculating N_y vjps, so is O(num_samples * num_y * prod(shape)) in memory
         sampler = get_sampler(
             sampling_shape,
@@ -233,7 +234,7 @@ def get_cs_sampler(
             stack_samples=stack_samples,
             denoise=True,
         )
-    elif config.sampling.cs_method.lower() == "tmpd2023bvjpplus":
+    elif config.sampling.cs_method.lower() == "diffusionlib2023bvjpplus":
         sampler = get_sampler(
             sampling_shape,
             EulerMaruyama(

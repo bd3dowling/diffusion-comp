@@ -38,7 +38,7 @@ def get_config():
     # NOTE: It has to be a name of a tfrecords file
     # NOTE: The ffhq-rn record stands for 2**n image_size
     # data.tfrecords_path = './assets/ffhq/ffhq-r08.tfrecords'
-    data.tfrecords_path = "../tmpd/assets/ffhq/ffhq-r08.tfrecords"
+    data.tfrecords_path = "../diffusionlib/assets/ffhq/ffhq-r08.tfrecords"
 
     # model
     model = config.model
@@ -68,7 +68,7 @@ def get_config():
 
     # optim
     config.seed = 2023
-    sampling.cs_method = "TMPD2023bvjpplus"
+    sampling.cs_method = "diffusionlib2023bvjpplus"
 
     sampling.stack_samples = False
     sampling.noise_std = 0.05

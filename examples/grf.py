@@ -2,7 +2,7 @@
 import logging
 import time
 
-import diffusionjax.sde as sde_lib
+import diffusionlib.sde as sde_lib
 import jax
 import jax.numpy as jnp
 import jax.random as random
@@ -10,16 +10,16 @@ import lab as B
 import matplotlib.pyplot as plt
 import numpy as np
 from absl import app, flags
-from diffusionjax.plot import plot_heatmap, plot_samples, plot_samples_1D
-from diffusionjax.solvers import EulerMaruyama
-from diffusionjax.utils import get_sampler, get_times
+from diffusionlib.plot import plot_heatmap, plot_samples, plot_samples_1D
+from diffusionlib.solvers import EulerMaruyama
+from diffusionlib.utils import get_sampler, get_times
 from jax import jit, vmap
 from ml_collections.config_flags import config_flags
 from mlkernels import Matern52
 from probit.approximators import LaplaceGP as GP
 from probit.utilities import log_gaussian_likelihood
-from tmpd.plot import Distance2, Wasserstein2, plot
-from tmpd.samplers import get_cs_sampler
+from diffusionlib.plot import Distance2, Wasserstein2, plot
+from diffusionlib.samplers import get_cs_sampler
 
 FLAGS = flags.FLAGS
 config_flags.DEFINE_config_file(
@@ -63,14 +63,14 @@ def main(argv):
 
     # Setup SDE
     if config.training.sde.lower() == "vpsde":
-        from diffusionjax.utils import get_linear_beta_function
+        from diffusionlib.utils import get_linear_beta_function
 
         beta, log_mean_coeff = get_linear_beta_function(
             beta_min=config.model.beta_min, beta_max=config.model.beta_max
         )
         sde = sde_lib.VP(beta, log_mean_coeff)
     elif config.training.sde.lower() == "vesde":
-        from diffusionjax.utils import get_sigma_function
+        from diffusionlib.utils import get_sigma_function
 
         sigma = get_sigma_function(
             sigma_min=config.model.sigma_min, sigma_max=config.model.sigma_max

@@ -26,7 +26,7 @@ from jax import jit, value_and_grad
 from torch.utils.data import DataLoader
 from tqdm import tqdm, trange
 
-import diffusionlib.sde.jax as sde_lib
+import diffusionlib.sde as sde_lib
 from diffusionlib.model.jax import CNN, MLP
 from diffusionlib.sampler.jax import DDIMVE, DDIMVP, DDPM, SMLD, Annealed, EulerMaruyama
 from diffusionlib.util.misc import (

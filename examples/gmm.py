@@ -2,7 +2,6 @@
 import logging
 import time
 
-import diffusionjax.sde as sde_lib
 import jax
 import jax.numpy as jnp
 import jax.random as random
@@ -12,18 +11,19 @@ import ot
 import pandas as pd
 import torch
 from absl import app, flags
-from diffusionjax.plot import plot_heatmap
-from diffusionjax.run_lib import get_ddim_chain
-from diffusionjax.utils import get_sampler
 from jax import grad, vmap
-from jax.tree_util import Partial as partial
+from jax.tree_util import Partial
 from ml_collections.config_flags import config_flags
 from scipy.stats import wasserstein_distance
-from tmpd.plot import plot_image, plot_single_image
-from tmpd.samplers import get_cs_sampler
 from torch import eye, manual_seed, randn_like, vstack
 from torch.distributions import Categorical, MixtureSameFamily, MultivariateNormal
 from tqdm import trange
+
+import diffusionlib.sde.jax as sde_lib
+from diffusionlib.run import get_ddim_chain
+from diffusionlib.sampler.tmpd import get_cs_sampler
+from diffusionlib.util.misc import get_linear_beta_function, get_sampler, get_sigma_function
+from diffusionlib.util.plot import plot_heatmap, plot_image, plot_single_image
 
 FLAGS = flags.FLAGS
 config_flags.DEFINE_config_file(
@@ -175,15 +175,11 @@ def main(argv):
 
     # Setup SDE
     if config.training.sde.lower() == "vpsde":
-        from diffusionjax.utils import get_linear_beta_function
-
         beta, log_mean_coeff = get_linear_beta_function(
             config.model.beta_min, config.model.beta_max
         )
         sde = sde_lib.VP(beta, log_mean_coeff)
     elif config.training.sde.lower() == "vesde":
-        from diffusionjax.utils import get_sigma_function
-
         sigma = get_sigma_function(config.model.sigma_min, config.model.sigma_max)
         sde = sde_lib.VE(sigma)
     else:
@@ -206,8 +202,8 @@ def main(argv):
             ]
         weights = torch.ones(len(means))
         weights = weights / weights.sum()
-        ou_mixt_fun = partial(ou_mixt, means=means, dim=config.data.image_size, weights=weights)
-        ou_mixt_jax_fun = partial(
+        ou_mixt_fun = Partial(ou_mixt, means=means, dim=config.data.image_size, weights=weights)
+        ou_mixt_jax_fun = Partial(
             ou_mixt_numpyro,
             means=[jnp.array(m.numpy()) for m in means],
             dim=config.data.image_size,
@@ -321,7 +317,7 @@ def main(argv):
                     "STSL",
                 ]
                 cs_methods = ["KPDDPM", "KPDDPMdiag", "DPSDDPM", "PiGDMVP", "STSL"]
-                # cs_methods = ['TMPD2023avjp', 'TMPD2023bvjp', 'Chung2022scalar', 'Song2023']
+                # cs_methods = ['diffusionlib2023avjp', 'diffusionlib2023bvjp', 'Chung2022scalar', 'Song2023']
 
                 for cs_method in cs_methods:
                     config.sampling.cs_method = cs_method

@@ -6,8 +6,8 @@ import flax
 import jax
 import jax.numpy as jnp
 import numpy as np
-from diffusionjax.sde import VE, VP
-from diffusionjax.utils import batch_mul
+from diffusionlib.sde import VE, VP
+from diffusionlib.utils import batch_mul
 
 
 # The dataclass that stores all training states

@@ -134,7 +134,7 @@ class PosteriorSamplingPlus(ConditioningMethod_):
 class PsuedoInverseGuided(ConditioningMethod_):
     def __init__(self, operator, noiser, **kwargs):
         """
-        NOTE: To be used with `tmpdtorch.gaussian_diffusion.pigdm_sample_loop`.
+        NOTE: To be used with `diffusionlibtorch.gaussian_diffusion.pigdm_sample_loop`.
         NOTE: In torch, usually PiGDM is up to 2x slower than DPS due to the extra vjp.
         NOTE: In this class, I have tried to reproduce https://openreview.net/forum?id=9_gsMA8MRKQ
         although the authors do not release code, and do not mention key aspects such as use of
@@ -172,10 +172,10 @@ class PsuedoInverseGuided(ConditioningMethod_):
 @register_conditioning_method(name="altpig")
 class AltPsuedoInverseGuided(ConditioningMethod_):
     """
-    NOTE: To be used with `tmpdtorch.gaussian_diffusion.tmpd_sample_loop`.
+    NOTE: To be used with `diffusionlibtorch.gaussian_diffusion.diffusionlib_sample_loop`.
     NOTE: An alternative implementation of PiGDM that is more numerically stable, and does not require
     clipping, although different in some aspects to the authors' Algorithm 1 in that it more closely
-    follows the TMPD algorithm.
+    follows the diffusionlib algorithm.
     """
 
     def __init__(self, operator, noiser, **kwargs):

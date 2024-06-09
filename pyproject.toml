@@ -30,6 +30,9 @@ ninja = "^1.11.1.1"
 tensorflow-gan = "^2.1.0"
 tensorflow-hub = "^0.16.1"
 tensorflow-probability = "^0.24.0"
+ml-collections = "^0.1.1"
+numpyro = "^0.15.0"
+pot = "^0.9.3"
 
 [tool.poetry.group.dev]
 optional = true
@@ -82,8 +85,10 @@ strict = true
 # TODO: D - pydocstyle
 select = ["E", "F", "I", "N", "W", "UP"]
 
-# N805 - invalid-first-argument-name-for-method
-ignore = ["N805"]
+ignore = [
+    "N805", # invalid-first-argument-name-for-method
+    "N812", # lowercase-imported-as-non-lowercase
+]
 
 line-length = 100
 

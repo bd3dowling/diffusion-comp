@@ -1,5 +1,5 @@
 """Config for `examples/example.py`."""
-from diffusion.configs.default_config import get_default_configs
+from diffusionlib.configs.default_config import get_default_configs
 
 
 def get_config():

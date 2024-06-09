@@ -209,7 +209,7 @@ class GaussianDiffusion:
 
             yield img, distance.item(), percent_complete
 
-    def tmpd_sample_loop(
+    def diffusionlib_sample_loop(
         self,
         config,  # TODO: can probably remove this
         model,
