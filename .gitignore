@@ -1,5 +1,7 @@
+*.tfrecords
 *.pt
 .ruff_cache
+results/
 
 # macOS
 .DS_Store

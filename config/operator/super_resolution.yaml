@@ -2,6 +2,18 @@ conditioning:
   method: ps
   params:
     scale: 0.3
+
+dpsconditioning:
+  method: ps
+  params:
+    scale: 1.0
+
+tmpdconditioning:
+  method: tmp
+
+pigdmconditioning:
+  method: pig
+
 measurement:
   operator:
     name: super_resolution

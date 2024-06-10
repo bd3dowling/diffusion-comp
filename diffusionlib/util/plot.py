@@ -1,5 +1,6 @@
 """Plotting code for the examples."""
 from functools import partial
+from typing import Any
 
 import jax.numpy as jnp
 import jax.random as random
@@ -7,9 +8,14 @@ import matplotlib.animation as animation
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy
+import seaborn as sns
 from jax import jit, vmap
+from jaxtyping import Array
+from matplotlib.animation import FuncAnimation
+from matplotlib.image import AxesImage
 from scipy.stats import wasserstein_distance
 
+CM = sns.color_palette("mako_r", as_cmap=True)
 BG_ALPHA = 1.0
 MG_ALPHA = 1.0
 FG_ALPHA = 0.3
@@ -19,7 +25,7 @@ dpi_val = 1200
 cmap = "magma"
 
 
-def plot_heatmap_(samples, area_bounds, lengthscale=350.0):
+def plot_heatmap(samples, area_bounds, lengthscale=350.0):
     """Plots a heatmap of all samples in the area area_bounds x area_bounds.
     Args:
       samples: locations of particles shape (num_particles, 2)
@@ -47,31 +53,6 @@ def plot_heatmap_(samples, area_bounds, lengthscale=350.0):
     plt.close()
 
     return fig
-
-def plot_heatmap(samples, area_bounds, lengthscale=350.0, fname="plot_heatmap") -> None:
-  """Plots a heatmap of all samples in the area area_bounds x area_bounds.
-  Args:
-    samples: locations of particles shape (num_particles, 2)
-  """
-
-  def small_kernel(z, area_bounds):
-    a = jnp.linspace(area_bounds[0], area_bounds[1], 512)
-    x, y = jnp.meshgrid(a, a)
-    dist = (x - z[0]) ** 2 + (y - z[1]) ** 2
-    hm = jnp.exp(-lengthscale * dist)
-    return hm
-
-  @jit  # jit most of the code, but use the helper functions since cannot jit all of it because of plt
-  def produce_heatmap(samples, area_bounds):
-    return jnp.sum(vmap(small_kernel, in_axes=(0, None))(samples, area_bounds), axis=0)
-
-  hm = produce_heatmap(samples, area_bounds)
-  extent = area_bounds + area_bounds
-  plt.imshow(hm, interpolation="nearest", extent=extent)
-  ax = plt.gca()
-  ax.invert_yaxis()
-  plt.savefig(fname + ".png")
-  plt.close()
 
 
 def image_grid(x, image_size, num_channels):
@@ -178,10 +159,7 @@ def plot_single_image(
     ax.set_xlim([-22, 22])
     ax.set_ylim([-22, 22])
     fig.subplots_adjust(left=0.005, right=0.995, bottom=0.005, top=0.995)
-    plt.savefig(
-        f"inverse_problem_comparison_out_dist_{noise_std}_{dim}_{dim_y}_{timesteps}_{i}_{name}.pdf",
-        dpi=dpi_val,
-    )
+
     plt.savefig(
         f"inverse_problem_comparison_out_dist_{noise_std}_{dim}_{dim_y}_{timesteps}_{i}_{name}.png",
         transparent=True,
@@ -213,10 +191,6 @@ def plot_image(
     ax.set_xlim([-22, 22])
     ax.set_ylim([-22, 22])
     fig.subplots_adjust(left=0.005, right=0.995, bottom=0.005, top=0.995)
-    plt.savefig(
-        f"inverse_problem_comparison_out_dist_{noise_std}_{dim}_{dim_y}_{timesteps}_{i}_{name}.pdf",
-        dpi=dpi_val,
-    )
     plt.savefig(
         f"inverse_problem_comparison_out_dist_{noise_std}_{dim}_{dim_y}_{timesteps}_{i}_{name}.png",
         transparent=True,
@@ -301,3 +275,39 @@ def plot_beta_schedule(sde, solver):
     plt.legend()
     plt.savefig("plot_beta_schedule.png")
     plt.close()
+
+def plot_heatmap_(positions: Array, area_min: float = -2.0, area_max: float = 2.0) -> AxesImage:
+    # positions: locations of all particles in R^2, array (J, 2)
+    # area_min: lowest x and y coordinate
+    # area_max: highest x and y coordinate
+
+    # will plot a heatmap of all particles in the area [area_min, area_max] x [area_min, area_max]
+
+    heatmap_data = _get_heatmap_data(positions, area_min, area_max)
+    extent = (area_min, area_max, area_max, area_min)
+    im = plt.imshow(heatmap_data, cmap=CM, interpolation="nearest", extent=extent)
+    ax = plt.gca()
+    ax.invert_yaxis()
+    return im
+
+
+def animate_heatmap(samples: Array, all_outputs: Array, **kwargs: Any) -> FuncAnimation:
+    _im = plot_heatmap_(samples)
+    _fig = plt.figure(figsize=(8, 8))
+
+    def _animate(frame: int) -> list[AxesImage]:
+        _im.set_data(_get_heatmap_data(all_outputs[frame, :, :], **kwargs))
+        return [_im]
+
+    return animation.FuncAnimation(_fig, _animate, frames=all_outputs.shape[0])
+
+@jit
+def _get_heatmap_data(positions: Array, area_min: float = -2.0, area_max: float = 2.0) -> Array:
+    v_kernel = vmap(_small_kernel, in_axes=(0, None, None))
+    return jnp.sum(v_kernel(positions, area_min, area_max), axis=0)
+
+def _small_kernel(z: Array, area_min: float, area_max: float) -> Array:
+    a = jnp.linspace(area_min, area_max, 512)
+    x, y = jnp.meshgrid(a, a)
+    dist = (x - z[0]) ** 2 + (y - z[1]) ** 2
+    return jnp.exp(-350 * dist)

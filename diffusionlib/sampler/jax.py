@@ -1,23 +1,818 @@
 """Solver classes, including Markov chains."""
-import abc
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from functools import partial
 
 import jax
 import jax.numpy as jnp
 import jax.random as random
-from jax import grad, jacrev, random, vjp, vmap
+from jax import grad, jacrev, lax, vjp, vmap
+from jax.lax import scan
+from jaxtyping import Array, PRNGKeyArray
 
+from diffusionlib.conditioning_method.jax import ConditioningMethodName, get_conditioning_method
+from diffusionlib.mean_processor.jax import MeanProcessor, MeanProcessorType
+from diffusionlib.util.array import extract_and_expand
 from diffusionlib.util.misc import (
     batch_mul,
     batch_mul_A,
     continuous_to_discrete,
     get_linear_beta_function,
+    get_sampler,
     get_sigma_function,
     get_times,
     get_timestep,
+    shared_update,
 )
+from diffusionlib.variance_processor.jax import VarianceProcessor, VarianceProcessorType
+
+cs_method_map = {
+    "chung2022scalar": ConditioningMethodName.DIFFUSION_POSTERIOR_SAMPLING,
+    "chung2022scalarplus": ConditioningMethodName.DIFFUSION_POSTERIOR_SAMPLING,
+    "chung2022": ConditioningMethodName.DIFFUSION_POSTERIOR_SAMPLING_MOD,
+    "chung2022plus": ConditioningMethodName.DIFFUSION_POSTERIOR_SAMPLING_MOD,
+    "song2023": ConditioningMethodName.PSEUDO_INVERSE_GUIDANCE,
+    "song2023plus": ConditioningMethodName.PSEUDO_INVERSE_GUIDANCE,
+    "diffusion2023avjp": ConditioningMethodName.VJP_GUIDANCE,
+    "diffusion2023ajacfwd": ConditioningMethodName.JAC_FWD_GUIDANCE,
+    "diffusion2023ajacrev": ConditioningMethodName.JAC_REV_GUIDANCE,
+    "diffusion2023ajacrevplus": ConditioningMethodName.JAC_REV_GUIDANCE,
+    "diffusion2023bvjpplus": ConditioningMethodName.VJP_GUIDANCE_MASK,
+    # Below vmap across calculating N_y vjps, so is O(num_samples * num_y * prod(shape)) in memory
+    "diffusion2023b": ConditioningMethodName.JAC_REV_GUIDANCE_DIAG,
+    "diffusion2023bjacfwd": ConditioningMethodName.JAC_FWD_GUIDANCE_DIAG,
+    "diffusion2023bvjp": ConditioningMethodName.VJP_GUIDANCE_DIAG,
+}
 
 
-class Solver(abc.ABC):
+def get_cs_sampler(
+    config,
+    sde,
+    model,
+    sampling_shape,
+    inverse_scaler,
+    y,
+    H,
+    observation_map,
+    adjoint_observation_map,
+    stack_samples=False,
+):
+    """Create a sampling function
+
+    Args:
+        config: A `ml_collections.ConfigDict` object that contains all configuration information.
+        sde: A valid SDE class (the forward sde).
+        score:
+        shape: The shape of array, x. (num_samples,) + x_shape, where x_shape is the shape
+            of the object being sampled from, for example, an image may have
+            x_shape==(H, W, C), and so shape==(N, H, W, C) where N is the number of samples.
+        inverse_scaler: The inverse data normalizer function.
+        y: the data
+        H: an observation matrix.
+        operator_map:
+        adjoint_operator_map: TODO generalize like this?
+
+    Returns:
+        A function that takes random states and a replicated training state and outputs samples with the
+        trailing dimensions matching `shape`.
+    """
+    cs_method: str = config.sampling.cs_method.lower()
+
+    if cs_method in ("chung2022scalar", "chung2022scalarplus"):
+        reverse_sde = sde.reverse(model)
+        scale = config.solver.num_outer_steps * config.solver.dps_scale_hyperparameter
+        sampler = get_sampler(
+            sampling_shape,
+            EulerMaruyama(
+                reverse_sde.guide(
+                    get_conditioning_method(
+                        cs_method_map[cs_method],
+                        sde=reverse_sde,
+                        observation_map=observation_map,
+                        y=y,
+                        scale=scale,
+                    ).get_guidance_score_func()
+                )
+            ),
+            inverse_scaler=inverse_scaler,
+            stack_samples=stack_samples,
+            denoise=True,
+        )
+    elif cs_method in ("chung2022", "chung2022plus"):
+        reverse_sde = sde.reverse(model)
+        sampler = get_sampler(
+            sampling_shape,
+            EulerMaruyama(
+                reverse_sde.guide(
+                    get_conditioning_method(
+                        cs_method_map[cs_method],
+                        sde=reverse_sde,
+                        observation_map=observation_map,
+                        y=y,
+                        noise_std=config.sampling.noise_std,
+                    ).get_guidance_score_func()
+                )
+            ),
+            inverse_scaler=inverse_scaler,
+            stack_samples=stack_samples,
+            denoise=True,
+        )
+    elif cs_method == "song2023":
+        reverse_sde = sde.reverse(model)
+        sampler = get_sampler(
+            sampling_shape,
+            EulerMaruyama(
+                reverse_sde.guide(
+                    get_conditioning_method(
+                        cs_method_map[cs_method],
+                        sde=reverse_sde,
+                        observation_map=observation_map,
+                        y=y,
+                        noise_std=config.sampling.noise_std,
+                        HHT=H @ H.T,
+                    ).get_guidance_score_func()
+                )
+            ),
+            inverse_scaler=inverse_scaler,
+            stack_samples=stack_samples,
+            denoise=True,
+        )
+    elif cs_method == "song2023plus":
+        reverse_sde = sde.reverse(model)
+        sampler = get_sampler(
+            sampling_shape,
+            EulerMaruyama(
+                reverse_sde.guide(
+                    get_conditioning_method(
+                        cs_method_map[cs_method],
+                        sde=reverse_sde,
+                        observation_map=observation_map,
+                        y=y,
+                        noise_std=config.sampling.noise_std,
+                    ).get_guidance_score_func()
+                )
+            ),
+            inverse_scaler=inverse_scaler,
+            stack_samples=stack_samples,
+            denoise=True,
+        )
+    elif cs_method in ("diffusion2023avjp", "diffusion2023bvjp"):
+        reverse_sde = sde.reverse(model)
+        sampler = get_sampler(
+            sampling_shape,
+            EulerMaruyama(
+                reverse_sde.guide(
+                    get_conditioning_method(
+                        cs_method_map[cs_method],
+                        sde=reverse_sde,
+                        H=H,
+                        y=y,
+                        noise_std=config.sampling.noise_std,
+                        shape=sampling_shape,
+                    ).get_guidance_score_func()
+                )
+            ),
+            inverse_scaler=inverse_scaler,
+            stack_samples=stack_samples,
+            denoise=True,
+        )
+    elif cs_method.startswith("diffusion"):
+        reverse_sde = sde.reverse(model)
+        sampler = get_sampler(
+            sampling_shape,
+            EulerMaruyama(
+                reverse_sde.guide(
+                    get_conditioning_method(
+                        cs_method_map[cs_method],
+                        sde=reverse_sde,
+                        observation_map=observation_map,
+                        y=y,
+                        noise_std=config.sampling.noise_std,
+                        shape=sampling_shape,
+                    ).get_guidance_score_func()
+                )
+            ),
+            inverse_scaler=inverse_scaler,
+            stack_samples=stack_samples,
+            denoise=True,
+        )
+    elif cs_method == "stsl":
+        # Reproduce Second Order Tweedie sampler from Surrogate Loss (STSL) from (Rout et al. 2023)
+        # What contrastive loss do they use?
+        ts, _ = get_times(
+            num_steps=config.solver.num_outer_steps, dt=config.solver.dt, t0=config.solver.epsilon
+        )
+        beta, _ = get_linear_beta_function(
+            beta_min=config.model.beta_min, beta_max=config.model.beta_max
+        )
+        forward_solver = EulerMaruyama(sde)
+        outer_solver = STSL(
+            config.solver.stsl_scale_hyperparameter,
+            config.solver.dps_scale_hyperparameter,
+            y,
+            observation_map,
+            adjoint_observation_map,
+            config.sampling.noise_std,
+            sampling_shape[1:],
+            model,
+            config.solver.eta,
+            beta,
+            ts,
+        )
+        # needs a special prior initialization that depends on the observed data, so uses different sampler
+        sampler = get_stsl_sampler(
+            sampling_shape,
+            forward_solver,
+            outer_solver,
+            inverse_scaler=inverse_scaler,
+            stack_samples=stack_samples,
+            denoise=True,
+        )
+    elif cs_method == "mpgd":
+        # Reproduce MPGD (et al. 2023) paper for VP SDE
+        ts, _ = get_times(
+            num_steps=config.solver.num_outer_steps, dt=config.solver.dt, t0=config.solver.epsilon
+        )
+        beta, _ = get_linear_beta_function(
+            beta_min=config.model.beta_min, beta_max=config.model.beta_max
+        )
+        outer_solver = MPGD(
+            config.solver.mpgd_scale_hyperparameter,
+            y,
+            observation_map,
+            config.sampling.noise_std,
+            sampling_shape[1:],
+            model,
+            beta,
+            ts,
+        )
+        sampler = get_sampler(
+            sampling_shape,
+            outer_solver,
+            inverse_scaler=inverse_scaler,
+            stack_samples=stack_samples,
+            denoise=True,
+        )
+    elif cs_method == "dpsddpm":
+        ts, _ = get_times(
+            num_steps=config.solver.num_outer_steps, dt=config.solver.dt, t0=config.solver.epsilon
+        )
+        beta, _ = get_linear_beta_function(
+            beta_min=config.model.beta_min, beta_max=config.model.beta_max
+        )
+        score = model
+        # Reproduce DPS (Chung et al. 2022) paper for VP SDE
+        outer_solver = DPSDDPM(
+            config.solver.dps_scale_hyperparameter, y, observation_map, score, beta, ts
+        )
+        sampler = get_sampler(
+            sampling_shape,
+            outer_solver,
+            inverse_scaler=inverse_scaler,
+            stack_samples=stack_samples,
+            denoise=True,
+        )
+    elif cs_method == "dpsddpmplus":
+        score = model
+        ts, _ = get_times(
+            num_steps=config.solver.num_outer_steps, dt=config.solver.dt, t0=config.solver.epsilon
+        )
+        beta, _ = get_linear_beta_function(
+            beta_min=config.model.beta_min, beta_max=config.model.beta_max
+        )
+        # Reproduce DPS (Chung et al. 2022) paper for VP SDE
+        # https://arxiv.org/pdf/2209.14687.pdf#page=20&zoom=100,144,757
+        # https://github.com/DPS2022/diffusion-posterior-sampling/blob/effbde7325b22ce8dc3e2c06c160c021e743a12d/guided_diffusion/condition_methods.py#L86
+        # https://github.com/DPS2022/diffusion-posterior-sampling/blob/effbde7325b22ce8dc3e2c06c160c021e743a12d/guided_diffusion/condition_methods.py#L2[…]C47
+        outer_solver = DPSDDPMplus(
+            config.solver.dps_scale_hyperparameter, y, observation_map, score, beta, ts
+        )
+        sampler = get_sampler(
+            sampling_shape,
+            outer_solver,
+            inverse_scaler=inverse_scaler,
+            stack_samples=stack_samples,
+            denoise=True,
+        )
+    elif cs_method == "dpssmld":
+        # Reproduce DPS (Chung et al. 2022) paper for VE SDE
+        ts, _ = get_times(
+            num_steps=config.solver.num_outer_steps, dt=config.solver.dt, t0=config.solver.epsilon
+        )
+        sigma = get_sigma_function(
+            sigma_min=config.model.sigma_min, sigma_max=config.model.sigma_max
+        )
+        score = model
+        outer_solver = DPSSMLD(
+            config.solver.dps_scale_hyperparameter, y, observation_map, score, sigma, ts
+        )
+        sampler = get_sampler(
+            sampling_shape,
+            outer_solver,
+            inverse_scaler=inverse_scaler,
+            stack_samples=stack_samples,
+            denoise=True,
+        )
+    elif cs_method == "dpssmldplus":
+        # Reproduce DPS (Chung et al. 2022) paper for VE SDE
+        ts, _ = get_times(
+            num_steps=config.solver.num_outer_steps, dt=config.solver.dt, t0=config.solver.epsilon
+        )
+        sigma = get_sigma_function(
+            sigma_min=config.model.sigma_min, sigma_max=config.model.sigma_max
+        )
+        score = model
+        outer_solver = DPSSMLDplus(
+            config.solver.dps_scale_hyperparameter, y, observation_map, score, sigma, ts
+        )
+        sampler = get_sampler(
+            sampling_shape,
+            outer_solver,
+            inverse_scaler=inverse_scaler,
+            stack_samples=stack_samples,
+            denoise=True,
+        )
+    elif cs_method == "kpddpm":
+        ts, _ = get_times(
+            num_steps=config.solver.num_outer_steps, dt=config.solver.dt, t0=config.solver.epsilon
+        )
+        beta, _ = get_linear_beta_function(
+            beta_min=config.model.beta_min, beta_max=config.model.beta_max
+        )
+        score = model
+        outer_solver = KPDDPM(
+            y, observation_map, config.sampling.noise_std, sampling_shape[1:], score, beta, ts
+        )
+        sampler = get_sampler(
+            sampling_shape,
+            outer_solver,
+            inverse_scaler=inverse_scaler,
+            stack_samples=stack_samples,
+            denoise=True,
+        )
+    elif cs_method == "kpsmld":
+        ts, _ = get_times(
+            num_steps=config.solver.num_outer_steps, dt=config.solver.dt, t0=config.solver.epsilon
+        )
+        sigma = get_sigma_function(
+            sigma_min=config.model.sigma_min, sigma_max=config.model.sigma_max
+        )
+        score = model
+        outer_solver = KPSMLD(
+            y, observation_map, config.sampling.noise_std, sampling_shape[1:], score, sigma, ts
+        )
+        sampler = get_sampler(
+            sampling_shape,
+            outer_solver,
+            inverse_scaler=inverse_scaler,
+            stack_samples=stack_samples,
+            denoise=True,
+        )
+    elif cs_method == "kpsmlddiag":
+        ts, _ = get_times(
+            num_steps=config.solver.num_outer_steps, dt=config.solver.dt, t0=config.solver.epsilon
+        )
+        sigma = get_sigma_function(
+            sigma_min=config.model.sigma_min, sigma_max=config.model.sigma_max
+        )
+        score = model
+        outer_solver = KPSMLDdiag(
+            y, observation_map, config.sampling.noise_std, sampling_shape[1:], score, sigma, ts
+        )
+        sampler = get_sampler(
+            sampling_shape,
+            outer_solver,
+            inverse_scaler=inverse_scaler,
+            stack_samples=stack_samples,
+            denoise=True,
+        )
+    elif cs_method == "kpddpmdiag":
+        ts, _ = get_times(
+            num_steps=config.solver.num_outer_steps, dt=config.solver.dt, t0=config.solver.epsilon
+        )
+        beta, _ = get_linear_beta_function(
+            beta_min=config.model.beta_min, beta_max=config.model.beta_max
+        )
+        score = model
+        outer_solver = KPDDPMdiag(
+            y, observation_map, config.sampling.noise_std, sampling_shape[1:], score, beta, ts
+        )
+        sampler = get_sampler(
+            sampling_shape,
+            outer_solver,
+            inverse_scaler=inverse_scaler,
+            stack_samples=stack_samples,
+            denoise=True,
+        )
+    elif cs_method == "kpddpmplus":
+        ts, _ = get_times(
+            num_steps=config.solver.num_outer_steps, dt=config.solver.dt, t0=config.solver.epsilon
+        )
+        beta, _ = get_linear_beta_function(
+            beta_min=config.model.beta_min, beta_max=config.model.beta_max
+        )
+        score = model
+        outer_solver = KPDDPMplus(
+            y, observation_map, config.sampling.noise_std, sampling_shape[1:], score, beta, ts
+        )
+        sampler = get_sampler(
+            sampling_shape,
+            outer_solver,
+            inverse_scaler=inverse_scaler,
+            stack_samples=stack_samples,
+            denoise=True,
+        )
+    elif cs_method == "kpsmldplus":
+        ts, _ = get_times(
+            num_steps=config.solver.num_outer_steps, dt=config.solver.dt, t0=config.solver.epsilon
+        )
+        sigma = get_sigma_function(
+            sigma_min=config.model.sigma_min, sigma_max=config.model.sigma_max
+        )
+        score = model
+        outer_solver = KPSMLDplus(
+            y, observation_map, config.sampling.noise_std, sampling_shape[1:], score, sigma, ts
+        )
+        sampler = get_sampler(
+            sampling_shape,
+            outer_solver,
+            inverse_scaler=inverse_scaler,
+            stack_samples=stack_samples,
+            denoise=True,
+        )
+    elif cs_method == "reproducepigdmvp":
+        # Reproduce PiGDM (Song et al. 2023) paper for VP SDE
+        ts, _ = get_times(
+            num_steps=config.solver.num_outer_steps, dt=config.solver.dt, t0=config.solver.epsilon
+        )
+        beta, _ = get_linear_beta_function(
+            beta_min=config.model.beta_min, beta_max=config.model.beta_max
+        )
+        outer_solver = ReproducePiGDMVP(
+            y,
+            observation_map,
+            config.sampling.noise_std,
+            sampling_shape[:1],
+            model,
+            data_variance=1.0,
+            eta=config.solver.eta,
+            beta=beta,
+            ts=ts,
+        )
+        sampler = get_sampler(
+            sampling_shape,
+            outer_solver,
+            inverse_scaler=inverse_scaler,
+            stack_samples=stack_samples,
+            denoise=True,
+        )
+    elif cs_method == "reproducepigdmvpplus":
+        # Reproduce PiGDM (Song et al. 2023) paper for VP SDE
+        ts, _ = get_times(
+            num_steps=config.solver.num_outer_steps, dt=config.solver.dt, t0=config.solver.epsilon
+        )
+        beta, _ = get_linear_beta_function(
+            beta_min=config.model.beta_min, beta_max=config.model.beta_max
+        )
+        outer_solver = ReproducePiGDMVPplus(
+            y,
+            observation_map,
+            config.sampling.noise_std,
+            sampling_shape[1:],
+            model,
+            data_variance=1.0,
+            eta=config.solver.eta,
+            beta=beta,
+            ts=ts,
+        )
+        sampler = get_sampler(
+            sampling_shape,
+            outer_solver,
+            inverse_scaler=inverse_scaler,
+            stack_samples=stack_samples,
+            denoise=True,
+        )
+    elif cs_method == "pigdmvp":
+        # Based on PiGDM (Song et al. 2023) paper for VP SDE
+        ts, _ = get_times(
+            num_steps=config.solver.num_outer_steps, dt=config.solver.dt, t0=config.solver.epsilon
+        )
+        beta, _ = get_linear_beta_function(
+            beta_min=config.model.beta_min, beta_max=config.model.beta_max
+        )
+        outer_solver = PiGDMVP(
+            y,
+            observation_map,
+            config.sampling.noise_std,
+            sampling_shape[:1],
+            model,
+            data_variance=1.0,
+            eta=config.solver.eta,
+            beta=beta,
+            ts=ts,
+        )
+        sampler = get_sampler(
+            sampling_shape,
+            outer_solver,
+            inverse_scaler=inverse_scaler,
+            stack_samples=stack_samples,
+            denoise=True,
+        )
+    elif cs_method == "pigdmvpplus":
+        # Based on PiGDM (Song et al. 2023) paper for VP SDE
+        ts, _ = get_times(
+            num_steps=config.solver.num_outer_steps, dt=config.solver.dt, t0=config.solver.epsilon
+        )
+        beta, _ = get_linear_beta_function(
+            beta_min=config.model.beta_min, beta_max=config.model.beta_max
+        )
+        outer_solver = PiGDMVPplus(
+            y,
+            observation_map,
+            config.sampling.noise_std,
+            sampling_shape[1:],
+            model,
+            data_variance=1.0,
+            eta=config.solver.eta,
+            beta=beta,
+            ts=ts,
+        )
+        sampler = get_sampler(
+            sampling_shape,
+            outer_solver,
+            inverse_scaler=inverse_scaler,
+            stack_samples=stack_samples,
+            denoise=True,
+        )
+    elif cs_method == "pigdmve":
+        # Reproduce PiGDM (Song et al. 2023) paper for VE SDE
+        ts, _ = get_times(
+            num_steps=config.solver.num_outer_steps, dt=config.solver.dt, t0=config.solver.epsilon
+        )
+        sigma = get_sigma_function(
+            sigma_min=config.model.sigma_min, sigma_max=config.model.sigma_max
+        )
+        outer_solver = PiGDMVE(
+            y,
+            observation_map,
+            config.sampling.noise_std,
+            sampling_shape[1:],
+            model,
+            data_variance=1.0,
+            eta=config.solver.eta,
+            sigma=sigma,
+            ts=ts,
+        )
+        sampler = get_sampler(
+            sampling_shape,
+            outer_solver,
+            inverse_scaler=inverse_scaler,
+            stack_samples=stack_samples,
+            denoise=True,
+        )
+    elif cs_method == "pigdmveplus":
+        # Reproduce PiGDM (Song et al. 2023) paper for VE SDE
+        ts, _ = get_times(
+            num_steps=config.solver.num_outer_steps, dt=config.solver.dt, t0=config.solver.epsilon
+        )
+        sigma = get_sigma_function(
+            sigma_min=config.model.sigma_min, sigma_max=config.model.sigma_max
+        )
+        outer_solver = PiGDMVEplus(
+            y,
+            observation_map,
+            config.sampling.noise_std,
+            sampling_shape[1:],
+            model,
+            data_variance=1.0,
+            eta=config.solver.eta,
+            sigma=sigma,
+            ts=ts,
+        )
+        sampler = get_sampler(
+            sampling_shape,
+            outer_solver,
+            inverse_scaler=inverse_scaler,
+            stack_samples=stack_samples,
+            denoise=True,
+        )
+    elif cs_method == "kgdmvp":
+        ts, _ = get_times(
+            num_steps=config.solver.num_outer_steps, dt=config.solver.dt, t0=config.solver.epsilon
+        )
+        beta, _ = get_linear_beta_function(
+            beta_min=config.model.beta_min, beta_max=config.model.beta_max
+        )
+        outer_solver = KGDMVP(
+            y, observation_map, config.sampling.noise_std, sampling_shape[1:], model, sigma, ts
+        )
+        sampler = get_sampler(
+            sampling_shape,
+            outer_solver,
+            inverse_scaler=inverse_scaler,
+            stack_samples=stack_samples,
+            denoise=True,
+        )
+    elif cs_method == "kgdmve":
+        ts, _ = get_times(
+            num_steps=config.solver.num_outer_steps, dt=config.solver.dt, t0=config.solver.epsilon
+        )
+        sigma = get_sigma_function(
+            sigma_min=config.model.sigma_min, sigma_max=config.model.sigma_max
+        )
+        outer_solver = KGDMVE(
+            y, observation_map, config.sampling.noise_std, sampling_shape[1:], model, sigma, ts
+        )
+        sampler = get_sampler(
+            sampling_shape,
+            outer_solver,
+            inverse_scaler=inverse_scaler,
+            stack_samples=stack_samples,
+            denoise=True,
+        )
+    elif cs_method == "kgdmvpplus":
+        ts, _ = get_times(
+            num_steps=config.solver.num_outer_steps, dt=config.solver.dt, t0=config.solver.epsilon
+        )
+        beta, _ = get_linear_beta_function(
+            beta_min=config.model.beta_min, beta_max=config.model.beta_max
+        )
+        outer_solver = KGDMVPplus(
+            y, observation_map, config.sampling.noise_std, sampling_shape[1:], model, beta, ts
+        )
+        sampler = get_sampler(
+            sampling_shape,
+            outer_solver,
+            inverse_scaler=inverse_scaler,
+            stack_samples=stack_samples,
+            denoise=True,
+        )
+    elif cs_method == "kgdmveplus":
+        ts, _ = get_times(
+            num_steps=config.solver.num_outer_steps, dt=config.solver.dt, t0=config.solver.epsilon
+        )
+        sigma = get_sigma_function(
+            sigma_min=config.model.sigma_min, sigma_max=config.model.sigma_max
+        )
+        outer_solver = KGDMVEplus(
+            y, observation_map, config.sampling.noise_std, sampling_shape[1:], model, sigma, ts
+        )
+        sampler = get_sampler(
+            sampling_shape,
+            outer_solver,
+            inverse_scaler=inverse_scaler,
+            stack_samples=stack_samples,
+            denoise=True,
+        )
+    elif cs_method == "wc4dvar":
+        # Get prior samples via a method
+        raise NotImplementedError("TODO")
+    else:
+        raise ValueError(f"{config.sampling.cs_method=} not recognized")
+
+    return sampler
+
+
+def get_stsl_sampler(
+    shape, forward_solver, inner_solver, denoise=True, stack_samples=False, inverse_scaler=None
+):
+    """Get a sampler from (possibly interleaved) numerical solver(s).
+
+    Args:
+      shape: Shape of array, x. (num_samples,) + obj_shape, where x_shape is the shape
+        of the object being sampled from, for example, an image may have
+        obj_shape==(H, W, C), and so shape==(N, H, W, C) where N is the number of samples.
+      inner_solver: A valid numerical solver class that will act on an inner loop.
+      denoise: Bool, that if `True` applies one-step denoising to final samples.
+      stack_samples: Bool, that if `True` return all of the sample path or
+        just returns the last sample.
+      inverse_scaler: The inverse data normalizer function.
+    Returns:
+      A sampler.
+    """
+    if inverse_scaler is None:
+        inverse_scaler = lambda x: x
+
+    def sampler(rng, x_0=None):
+        """
+        Args:
+          rng: A JAX random state.
+          x_0: Initial condition. If `None`, then samples an initial condition from the
+              sde's initial condition prior. Note that this initial condition represents
+              `x_T sim Normal(O, I)` in reverse-time diffusion.
+        Returns:
+            Samples and the number of score function (model) evaluations.
+        """
+        forward_update = partial(shared_update, solver=forward_solver)
+        outer_ts = inner_solver.ts
+
+        def forward_step(carry, t):
+            rng, x, x_mean = carry
+            vec_t = jnp.full((shape[0],), t)
+            rng, step_rng = random.split(rng)
+            x, x_mean = forward_update(step_rng, x, vec_t)
+            return (rng, x, x_mean), ()
+
+        inner_update = partial(shared_update, solver=inner_solver)
+        inner_ts = jnp.ones((3, 1))
+        num_function_evaluations = jnp.size(outer_ts) * (3 * jnp.size(inner_ts))
+
+        def inner_step(carry, t):
+            rng, x, x_mean, vec_t = carry
+            rng, step_rng = random.split(rng)
+            x, x_mean = inner_update(step_rng, x, vec_t)
+            return (rng, x, x_mean, vec_t), ()
+
+        def outer_step(carry, t):
+            rng, x, x_mean = carry
+            vec_t = jnp.full(shape[0], t)
+            rng, step_rng = random.split(rng)
+            # Use x_mean as input for first inner step
+            (rng, x, x_mean, vec_t), _ = scan(
+                inner_step, (step_rng, x_mean, x_mean, vec_t), inner_ts
+            )
+            if not stack_samples:
+                return (rng, x, x_mean), ()
+            else:
+                if denoise:
+                    return (rng, x, x_mean), x_mean
+                else:
+                    return (rng, x, x_mean), x
+
+        rng, step_rng = random.split(rng)
+        if x_0 is None:
+            x = inner_solver.prior(step_rng, shape)
+        else:
+            assert x_0.shape == shape
+            x = x_0
+
+        # get initial sample
+        x = inner_solver.batch_adjoint_observation_map(inner_solver.y)
+        (_, x, x_mean), _ = scan(forward_step, (rng, x, x), outer_ts, reverse=False)
+
+        if not stack_samples:
+            (_, x, x_mean), _ = scan(outer_step, (rng, x, x), outer_ts, reverse=True)
+            return inverse_scaler(x_mean if denoise else x), num_function_evaluations
+        else:
+            (_, _, _), xs = scan(outer_step, (rng, x, x), outer_ts, reverse=True)
+            return inverse_scaler(xs), num_function_evaluations
+
+    # return jax.pmap(sampler, in_axes=(0), axis_name='batch')
+    return sampler
+
+
+def get_ddim_chain(config, model):
+    """
+    Args:
+        model: DDIM parameterizes the `epsilon(x, t) = -1. * fwd_marginal_std(t) * score(x, t)` function
+    """
+    if config.solver.outer_solver.lower() == "ddimvp":
+        ts, _ = get_times(
+            config.solver.num_outer_steps, dt=config.solver.dt, t0=config.solver.epsilon
+        )
+        beta, _ = get_linear_beta_function(
+            beta_min=config.model.beta_min, beta_max=config.model.beta_max
+        )
+        return DDIMVP(model, eta=config.solver.eta, beta=beta, ts=ts)
+    elif config.solver.outer_solver.lower() == "ddimve":
+        ts, _ = get_times(
+            config.solver.num_outer_steps, dt=config.solver.dt, t0=config.solver.epsilon
+        )
+        sigma = get_sigma_function(
+            sigma_min=config.model.sigma_min, sigma_max=config.model.sigma_max
+        )
+        return DDIMVE(model, eta=config.solver.eta, sigma=sigma, ts=ts)
+    else:
+        raise NotImplementedError(f"DDIM Chain {config.solver.outer_solver} unknown.")
+
+
+def get_markov_chain(config, score):
+    """
+    Args:
+      score: DDPM/SMLD(NCSN) parameterizes the `score(x, t)` function.
+    """
+    if config.solver.outer_solver.lower() == "ddpm":
+        ts, _ = get_times(
+            num_steps=config.solver.num_outer_steps, dt=config.solver.dt, t0=config.solver.epsilon
+        )
+        beta, _ = get_linear_beta_function(
+            beta_min=config.model.beta_min, beta_max=config.model.beta_max
+        )
+        return DDPM(score, beta=beta, ts=ts)
+    elif config.solver.outer_solver.lower() == "smld":
+        ts, _ = get_times(
+            config.solver.num_outer_steps, dt=config.solver.dt, t0=config.solver.epsilon
+        )
+        sigma = get_sigma_function(
+            sigma_min=config.model.sigma_min, sigma_max=config.model.sigma_max
+        )
+        return SMLD(score, sigma=sigma, ts=ts)
+    else:
+        raise NotImplementedError(f"Markov Chain {config.solver.outer_solver} unknown.")
+
+
+
+class Solver(ABC):
     """SDE solver abstract class. Functions are designed for a mini-batch of inputs."""
 
     def __init__(self, ts=None):
@@ -36,18 +831,8 @@ class Solver(abc.ABC):
         self.t0 = ts[0]
         self.dt = ts[1] - ts[0]
         self.num_steps = ts.size
-        # print("t \in [{}, {}] with step size dt={} and num_steps={}".format(
-        #   self.t0, self.t1, self.dt, self.num_steps))
-        dts = jnp.diff(ts)
-        if not jnp.all(dts > 0.0):
-            raise ValueError(f"ts must be monotonically increasing, got ts={ts}")
-        if not jnp.all(dts == self.dt):
-            raise ValueError(
-                f"stepsize dt must be constant; ts must be equally \
-      spaced, got diff(ts)={dts}"
-            )
 
-    @abc.abstractmethod
+    @abstractmethod
     def update(self, rng, x, t):
         """Return the update of the state and any auxilliary values.
 
@@ -60,6 +845,7 @@ class Solver(abc.ABC):
           x: A JAX array of the next state.
           x_mean: A JAX array. The next state without random noise. Useful for denoising.
         """
+        raise NotImplementedError
 
 
 class EulerMaruyama(Solver):
@@ -197,7 +983,10 @@ class DDPM(Solver):
         self.sqrt_alphas_cumprod_prev = jnp.sqrt(self.alphas_cumprod_prev)
         self.sqrt_1m_alphas_cumprod_prev = jnp.sqrt(1.0 - self.alphas_cumprod_prev)
 
-    def get_estimate_x_0_vmap(self, observation_map):
+    def get_estimate_x_0_vmap(self, observation_map, clip=False, centered=True):
+        if clip:
+            (a_min, a_max) = (-1.0, 1.0) if centered else (0.0, 1.0)
+
         def estimate_x_0(x, t, timestep):
             x = jnp.expand_dims(x, axis=0)
             t = jnp.expand_dims(t, axis=0)
@@ -205,11 +994,15 @@ class DDPM(Solver):
             v = self.sqrt_1m_alphas_cumprod[timestep] ** 2
             s = self.score(x, t)
             x_0 = (x + v * s) / m
+            if clip:
+                x_0 = jnp.clip(x_0, a_min=a_min, a_max=a_max)
             return observation_map(x_0), (s, x_0)
 
         return estimate_x_0
 
-    def get_estimate_x_0(self, observation_map):
+    def get_estimate_x_0(self, observation_map, clip=False, centered=True):
+        if clip:
+            (a_min, a_max) = (-1.0, 1.0) if centered else (0.0, 1.0)
         batch_observation_map = vmap(observation_map)
 
         def estimate_x_0(x, t, timestep):
@@ -217,6 +1010,8 @@ class DDPM(Solver):
             v = self.sqrt_1m_alphas_cumprod[timestep] ** 2
             s = self.score(x, t)
             x_0 = batch_mul(x + batch_mul(v, s), 1.0 / m)
+            if clip:
+                x_0 = jnp.clip(x_0, a_min=a_min, a_max=a_max)
             return batch_observation_map(x_0), (s, x_0)
 
         return estimate_x_0
@@ -253,6 +1048,147 @@ class DDPM(Solver):
         return x, x_mean
 
 
+# previous port... for reference
+@dataclass
+class DDPM_:
+    betas: Array
+    model_mean_type: MeanProcessorType
+    model_var_type: VarianceProcessorType
+    clip_denoised: bool = True
+
+    def __post_init__(self):
+        assert self.betas.ndim == 1, "betas must be 1-D"
+        assert (0 < self.betas).all() and (self.betas <= 1).all(), "betas must be in (0..1]"
+
+        self.num_timesteps = int(self.betas.shape[0])
+        self.alphas = 1.0 - self.betas
+        self.alphas_cumprod = jnp.cumprod(self.alphas, axis=0)
+        self.alphas_cumprod_prev = jnp.append(1.0, self.alphas_cumprod[:-1])
+        self.alphas_cumprod_next = jnp.append(self.alphas_cumprod[1:], 0.0)
+
+        # calculations for diffusion q(x_t | x_{t-1}) and others
+        self.sqrt_alphas_cumprod = jnp.sqrt(self.alphas_cumprod)
+        self.sqrt_one_minus_alphas_cumprod = jnp.sqrt(1.0 - self.alphas_cumprod)
+        self.log_one_minus_alphas_cumprod = jnp.log(1.0 - self.alphas_cumprod)
+        self.sqrt_recip_alphas_cumprod = jnp.sqrt(1.0 / self.alphas_cumprod)
+        self.sqrt_recipm1_alphas_cumprod = jnp.sqrt(1.0 / self.alphas_cumprod - 1)
+
+        # calculations for posterior q(x_{t-1} | x_t, x_0)
+        self.posterior_variance = (
+            self.betas * (1.0 - self.alphas_cumprod_prev) / (1.0 - self.alphas_cumprod)
+        )
+        # NOTE: log-calc clipped as posterior variance is 0 at the beginning of the chain.
+        self.posterior_log_variance_clipped = jnp.log(
+            jnp.append(self.posterior_variance[1], self.posterior_variance[1:])
+        )
+        self.posterior_mean_coef1 = (
+            self.betas * jnp.sqrt(self.alphas_cumprod_prev) / (1.0 - self.alphas_cumprod)
+        )
+        self.posterior_mean_coef2 = (
+            (1.0 - self.alphas_cumprod_prev) * jnp.sqrt(self.alphas) / (1.0 - self.alphas_cumprod)
+        )
+
+        self.mean_processor = MeanProcessor.from_name(
+            self.model_mean_type,
+            betas=self.betas,
+            clip_denoised=self.clip_denoised,
+        )
+
+        self.var_processor = VarianceProcessor.from_name(
+            self.model_var_type,
+            betas=self.betas,
+            posterior_variance=self.posterior_variance,
+            posterior_log_variance_clipped=self.posterior_log_variance_clipped,
+        )
+
+    @classmethod
+    def from_beta_range(
+        cls, n: int, beta_min: float = 0.1, beta_max: float = 20.0, **kwargs
+    ) -> DDPM:
+        betas = jnp.array(
+            [beta_min / n + i / (n * (n - 1)) * (beta_max - beta_min) for i in range(n)]
+        )
+
+        return cls(betas=betas, **kwargs)
+
+    def q_sample(self, x_0: Array, t: Array, key: PRNGKeyArray):
+        """Diffuse the data for a given number of diffusion steps.
+
+        In other words, sample from q(x_t | x_0).
+        """
+        noise = random.normal(key, x_0.shape)
+        coef1 = extract_and_expand(self.sqrt_alphas_cumprod, t, x_0)
+        coef2 = extract_and_expand(self.sqrt_one_minus_alphas_cumprod, t, x_0)
+
+        return coef1 * x_0 + coef2 * noise
+
+    def q_posterior_mean_variance(self, x_0: Array, x_t: Array, t: Array):
+        """Compute the mean and variance of the diffusion posterior: q(x_{t-1} | x_t, x_0)"""
+        coef1 = extract_and_expand(self.posterior_mean_coef1, t, x_0)
+        coef2 = extract_and_expand(self.posterior_mean_coef2, t, x_t)
+        posterior_mean = coef1 * x_0 + coef2 * x_t
+        posterior_variance = extract_and_expand(self.posterior_variance, t, x_t)
+        posterior_log_variance_clipped = extract_and_expand(
+            self.posterior_log_variance_clipped, t, x_t
+        )
+
+        return posterior_mean, posterior_variance, posterior_log_variance_clipped
+
+    def p_sample_loop(self, model, x_0, measurement, measurement_cond_fn, key: PRNGKeyArray):
+        def body_fn(idx, val):
+            img, key = val
+            key, subkey1, subkey2 = random.split(key, 3)
+
+            time = jnp.array([idx] * img.shape[0])
+            out = self.p_sample(x=img, t=time, model=model, key=subkey1)
+            noisy_measurement = self.q_sample(measurement, t=time, key=subkey2)
+
+            img, _ = measurement_cond_fn(
+                x_t=out["sample"],
+                measurement=measurement,
+                noisy_measurement=noisy_measurement,
+                x_prev=img,
+                x_0_hat=out["x_0_hat"],
+            )
+            return img, key
+
+        # Run the loop
+        final_img, _ = lax.fori_loop(0, self.num_timesteps, body_fn, (x_0, key))
+        return final_img
+
+    def p_sample(self, model, x, t, key):
+        out = self.p_mean_variance(model, x, t)
+        sample = out["mean"]
+
+        noise = random.normal(key, x.shape)
+        if t != 0:  # no noise when t == 0
+            sample += jnp.exp(0.5 * out["log_variance"]) * noise
+
+        return {"sample": sample, "x_0_hat": out["x_0_hat"]}
+
+    def p_mean_variance(self, model, x, t):
+        model_output = model(x, t)
+
+        # In the case of "learned" variance, model will give twice channels.
+        if model_output.shape[1] == 2 * x.shape[1]:
+            model_output, model_var_values = jnp.split(model_output, x.shape[1], axis=1)
+        else:
+            # The name of variable is wrong.
+            # This will just provide shape information, and
+            # will not be used for calculating something important in variance.
+            model_var_values = model_output
+
+        model_mean, x_0_hat = self.mean_processor.get_mean_and_xstart(x, t, model_output)
+        model_variance, model_log_variance = self.var_processor.get_variance(model_var_values, t)
+
+        return {
+            "mean": model_mean,
+            "variance": model_variance,
+            "log_variance": model_log_variance,
+            "x_0_hat": x_0_hat,
+        }
+
+
 class SMLD(Solver):
     """SMLD(NCSN) Markov Chain using Ancestral sampling."""
 
@@ -266,24 +1202,33 @@ class SMLD(Solver):
         self.discrete_sigmas_prev = jnp.append(0.0, self.discrete_sigmas[:-1])
         self.score = score
 
-    def get_estimate_x_0_vmap(self, observation_map):
+    def get_estimate_x_0_vmap(self, observation_map, clip=False, centered=False):
+        if clip:
+            (a_min, a_max) = (-1.0, 1.0) if centered else (0.0, 1.0)
+
         def estimate_x_0(x, t, timestep):
             x = jnp.expand_dims(x, axis=0)
             t = jnp.expand_dims(t, axis=0)
             v = self.discrete_sigmas[timestep] ** 2
             s = self.score(x, t)
             x_0 = x + v * s
+            if clip:
+                x_0 = jnp.clip(x_0, a_min=a_min, a_max=a_max)
             return observation_map(x_0), (s, x_0)
 
         return estimate_x_0
 
-    def get_estimate_x_0(self, observation_map):
+    def get_estimate_x_0(self, observation_map, clip=False, centered=False):
+        if clip:
+            (a_min, a_max) = (-1.0, 1.0) if centered else (0.0, 1.0)
         batch_observation_map = vmap(observation_map)
 
         def estimate_x_0(x, t, timestep):
             v = self.discrete_sigmas[timestep] ** 2
             s = self.score(x, t)
             x_0 = x + batch_mul(v, s)
+            if clip:
+                x_0 = jnp.clip(x_0, a_min=a_min, a_max=a_max)
             return batch_observation_map(x_0), (s, x_0)
 
         return estimate_x_0
@@ -319,11 +1264,11 @@ class SMLD(Solver):
 class DDIMVP(Solver):
     """DDIM Markov chain. For the DDPM Markov Chain or VP SDE."""
 
-    def __init__(self, model, eta=0.0, beta=None, ts=None):
+    def __init__(self, model, eta=1.0, beta=None, ts=None):
         """
         Args:
             model: DDIM parameterizes the `epsilon(x, t) = -1. * fwd_marginal_std(t) * score(x, t)` function.
-            eta: the hyperparameter for DDIM, a value of `eta=0.0` is deterministic 'probability ODE' solver, `eta=1.` is DDPMVP.
+            eta: the hyperparameter for DDIM, a value of `eta=0.0` is deterministic 'probability ODE' solver, `eta=1.0` is DDPMVP.
         """
         super().__init__(ts)
         if beta is None:
@@ -339,7 +1284,10 @@ class DDIMVP(Solver):
         self.sqrt_alphas_cumprod_prev = jnp.sqrt(self.alphas_cumprod_prev)
         self.sqrt_1m_alphas_cumprod_prev = jnp.sqrt(1.0 - self.alphas_cumprod_prev)
 
-    def get_estimate_x_0_vmap(self, observation_map):
+    def get_estimate_x_0_vmap(self, observation_map, clip=False, centered=True):
+        if clip:
+            (a_min, a_max) = (-1.0, 1.0) if centered else (0.0, 1.0)
+
         def estimate_x_0(x, t, timestep):
             x = jnp.expand_dims(x, axis=0)
             t = jnp.expand_dims(t, axis=0)
@@ -347,11 +1295,15 @@ class DDIMVP(Solver):
             sqrt_1m_alpha = self.sqrt_1m_alphas_cumprod[timestep]
             epsilon = self.model(x, t)
             x_0 = (x - sqrt_1m_alpha * epsilon) / m
+            if clip:
+                x_0 = jnp.clip(x_0, a_min=a_min, a_max=a_max)
             return observation_map(x_0), (epsilon, x_0)
 
         return estimate_x_0
 
-    def get_estimate_x_0(self, observation_map):
+    def get_estimate_x_0(self, observation_map, clip=False, centered=True):
+        if clip:
+            (a_min, a_max) = (-1.0, 1.0) if centered else (0.0, 1.0)
         batch_observation_map = vmap(observation_map)
 
         def estimate_x_0(x, t, timestep):
@@ -359,6 +1311,8 @@ class DDIMVP(Solver):
             sqrt_1m_alpha = self.sqrt_1m_alphas_cumprod[timestep]
             epsilon = self.model(x, t)
             x_0 = batch_mul(x - batch_mul(sqrt_1m_alpha, epsilon), 1.0 / m)
+            if clip:
+                x_0 = jnp.clip(x_0, a_min=a_min, a_max=a_max)
             return batch_observation_map(x_0), (epsilon, x_0)
 
         return estimate_x_0
@@ -397,10 +1351,10 @@ class DDIMVE(Solver):
     """DDIM Markov chain. For the SMLD Markov Chain or VE SDE.
     Args:
         model: DDIM parameterizes the `epsilon(x, t) = -1. * fwd_marginal_std(t) * score(x, t)` function.
-        eta: the hyperparameter for DDIM, a value of `eta=0.0` is deterministic 'probability ODE' solver, `eta=1.` is DDPMVE.
+        eta: the hyperparameter for DDIM, a value of `eta=0.0` is deterministic 'probability ODE' solver, `eta=1.0` is DDPMVE.
     """
 
-    def __init__(self, model, eta=0.0, sigma=None, ts=None):
+    def __init__(self, model, eta=1.0, sigma=None, ts=None):
         super().__init__(ts)
         if sigma is None:
             sigma = get_sigma_function(sigma_min=0.01, sigma_max=378.0)
@@ -411,24 +1365,33 @@ class DDIMVE(Solver):
         self.eta = eta
         self.model = model
 
-    def get_estimate_x_0_vmap(self, observation_map):
+    def get_estimate_x_0_vmap(self, observation_map, clip=False, centered=False):
+        if clip:
+            a_min, a_max = (-1.0, 1.0) if centered else (0.0, 1.0)
+
         def estimate_x_0(x, t, timestep):
             x = jnp.expand_dims(x, axis=0)
             t = jnp.expand_dims(t, axis=0)
             std = self.discrete_sigmas[timestep]
             epsilon = self.model(x, t)
             x_0 = x - std * epsilon
+            if clip:
+                x_0 = jnp.clip(x_0, a_min=a_min, a_max=a_max)
             return observation_map(x_0), (epsilon, x_0)
 
         return estimate_x_0
 
-    def get_estimate_x_0(self, observation_map):
+    def get_estimate_x_0(self, observation_map, clip=False, centered=False):
+        if clip:
+            a_min, a_max = (-1.0, 1.0) if centered else (0.0, 1.0)
         batch_observation_map = vmap(observation_map)
 
         def estimate_x_0(x, t, timestep):
             std = self.discrete_sigmas[timestep]
             epsilon = self.model(x, t)
             x_0 = x - batch_mul(std, epsilon)
+            if clip:
+                x_0 = jnp.clip(x_0, a_min=a_min, a_max=a_max)
             return batch_observation_map(x_0), (epsilon, x_0)
 
         return estimate_x_0
@@ -462,12 +1425,7 @@ class DDIMVE(Solver):
         return x, x_mean
 
 
-# FROM diffusionlib
-
-
-def batch_dot(a, b):
-    return vmap(lambda a, b: a.T @ b)(a, b)
-
+# FROM diffusionjax
 
 class STSL(DDIMVP):
     def __init__(

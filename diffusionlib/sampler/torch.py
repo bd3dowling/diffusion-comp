@@ -1,7 +1,9 @@
 """Sampler definitions and registry."""
 
 import math
+import os
 
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from strenum import StrEnum
@@ -9,6 +11,7 @@ from tqdm.auto import tqdm
 
 from diffusionlib.mean_processor.torch import get_mean_processor
 from diffusionlib.util.array import extract_and_expand
+from diffusionlib.util.image import clear_color
 from diffusionlib.variance_processor.torch import get_var_processor
 
 __SAMPLER__ = {}
@@ -209,7 +212,7 @@ class GaussianDiffusion:
 
             yield img, distance.item(), percent_complete
 
-    def diffusionlib_sample_loop(
+    def tmpd_sample_loop(
         self,
         config,  # TODO: can probably remove this
         model,

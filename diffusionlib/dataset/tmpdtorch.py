@@ -56,7 +56,7 @@ def central_crop(image, size):
 
 
 def _get_dataset(
-    num_devices, config, additional_dim=None, uniform_dequantization=False, evaluation=False
+    num_devices, batch_size, dataset, additional_dim=None, uniform_dequantization=False, evaluation=False
 ):
     """Create data loaders for training and evaluation.
 
@@ -71,7 +71,6 @@ def _get_dataset(
       train_ds, eval_ds, dataset_builder.
     """
     # Compute batch size for this worker.
-    batch_size = config.training.batch_size if not evaluation else config.eval.batch_size
     if batch_size % num_devices != 0:
         raise ValueError(
             f"Batch sizes ({batch_size} must be divided by" f"the number of devices ({num_devices})"
@@ -89,7 +88,7 @@ def _get_dataset(
         batch_dims = [jax.local_device_count(), additional_dim, per_device_batch_size]
 
     # Create dataset builders for each dataset.
-    if config.data.dataset == "CIFAR10":
+    if dataset == "CIFAR10":
         dataset_builder = tfds.builder("cifar10")
         train_split_name = "train"
         eval_split_name = "test"
@@ -100,7 +99,7 @@ def _get_dataset(
                 img, [config.data.image_size, config.data.image_size], antialias=True
             )
 
-    elif config.data.dataset == "SVHN":
+    elif dataset == "SVHN":
         dataset_builder = tfds.builder("svhn_cropped")
         train_split_name = "train"
         eval_split_name = "test"
@@ -111,7 +110,7 @@ def _get_dataset(
                 img, [config.data.image_size, config.data.image_size], antialias=True
             )
 
-    elif config.data.dataset == "CELEBA":
+    elif dataset == "CELEBA":
         dataset_builder = tfds.builder("celeb_a")
         train_split_name = "train"
         eval_split_name = "validation"
@@ -122,7 +121,7 @@ def _get_dataset(
             img = resize_small(img, config.data.image_size)
             return img
 
-    elif config.data.dataset == "LSUN":
+    elif dataset == "LSUN":
         dataset_builder = tfds.builder(f"lsun/{config.data.category}")
         train_split_name = "train"
         eval_split_name = "validation"
@@ -142,28 +141,25 @@ def _get_dataset(
                 img = tf.image.convert_image_dtype(img, tf.float32)
                 return img
 
-    elif config.data.dataset in ["CelebAHQ"]:
+    elif dataset in ["CelebAHQ"]:
         # dataset_builder = tf.data.tfrecorddataset(config.data.tfrecords_path)
         dataset_builder = tfds.builder("celeb_a_hq/256")
         train_split_name = eval_split_name = "train"
 
-    elif config.data.dataset in ["FFHQ"]:
-        # dataset_builder = tf.data.tfrecorddataset(config.data.tfrecords_path)
-        # NOTE: new api has this name
-        dataset_builder = tf.data.TFRecordDataset(config.data.tfrecords_path)
-        # dataset_builder = tfds.builder('ffhq/256')
+    elif dataset in ["FFHQ"]:
+        dataset_builder = tf.data.TFRecordDataset("./assets/ffhq-r08.tfrecords")
         train_split_name = eval_split_name = "train"
 
-    elif config.data.dataset in ["Imagenet"]:
+    elif dataset in ["Imagenet"]:
         dataset_builder = tf.data.TFRecordDataset(config.data.tfrecords_path)
         # dataset_builder = tfds.builder('ffhq/256')
         train_split_name = eval_split_name = "train"
 
     else:
-        raise NotImplementedError(f"Dataset {config.data.dataset} not yet supported.")
+        raise NotImplementedError(f"Dataset {dataset} not yet supported.")
 
     # Customize preprocess functions for each dataset.
-    if config.data.dataset in ["FFHQ", "CelebAHQ"]:
+    if dataset in ["FFHQ", "CelebAHQ"]:
 
         def preprocess_fn(d):
             sample = tf.io.parse_single_example(
@@ -177,8 +173,6 @@ def _get_dataset(
             data = tf.reshape(data, sample["shape"])
             data = tf.transpose(data, (1, 2, 0))
             img = tf.image.convert_image_dtype(data, tf.float32)
-            if config.data.random_flip and not evaluation:
-                img = tf.image.random_flip_left_right(img)
             if uniform_dequantization:
                 img = (tf.random.uniform(img.shape, dtype=tf.float32) + img * 255.0) / 256.0
             return dict(image=img, label=None)

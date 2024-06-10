@@ -7,6 +7,7 @@ import jax.numpy as jnp
 import jax.random as random
 from jax import vmap
 from jax.lax import scan
+from jaxtyping import Array
 
 
 def get_timestep(t, t0, t1, num_steps):
@@ -330,3 +331,11 @@ def get_sampler(
 
     # return jax.pmap(sampler, in_axes=(0), axis_name='batch')
     return sampler
+
+
+def sample_sphere(num_points: int) -> Array:
+    alphas = jnp.linspace(0, 2 * jnp.pi * (1 - 1 / num_points), num_points)
+    xs = jnp.cos(alphas)
+    ys = jnp.sin(alphas)
+
+    return jnp.stack([xs, ys], axis=1)

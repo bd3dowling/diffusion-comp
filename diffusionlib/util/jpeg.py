@@ -67,14 +67,6 @@ def dct(x, norm=None):
     return 2 * V.reshape(x_shape)
 
 
-# def idct_test(X, norm):
-#     x_torch = np.array(idct_torch(torch.from_numpy(np.array(X)), norm))
-#     x = np.array(idct(X, norm))
-#     print(x_torch)
-#     print(x)
-#     assert np.allclose(x_torch, x)
-#     assert 0
-
 
 def idct(x, norm=None):
     """
@@ -233,53 +225,6 @@ def apply_linear_3d(x, linear_layer):
     return X3.transpose(-1, -3).transpose(-1, -2)
 
 
-__DATASET__ = {}
-
-
-def get_dataset(name: str, root: str, **kwargs):
-    if __DATASET__.get(name, None) is None:
-        raise NameError(f"Dataset {name} is not defined.")
-    return __DATASET__[name](root=root, **kwargs)
-
-
-def register_dataset(name: str):
-    def wrapper(cls):
-        if __DATASET__.get(name, None):
-            raise NameError(f"Name {name} is already registered!")
-        __DATASET__[name] = cls
-        return cls
-
-    return wrapper
-
-
-def get_dataloader(dataset: VisionDataset, batch_size: int, num_workers: int, train: bool):
-    dataloader = DataLoader(
-        dataset, batch_size, shuffle=train, num_workers=num_workers, drop_last=train
-    )
-    return dataloader
-
-
-@register_dataset(name="ffhq")
-class FFHQDataset(VisionDataset):
-    def __init__(self, root: str, transforms: Optional[Callable] = None):
-        super().__init__(root, transforms)
-
-        self.fpaths = sorted(glob(root + "/**/*.png", recursive=True))
-        assert len(self.fpaths) > 0, "File list is empty. Check the root."
-
-    def __len__(self):
-        return len(self.fpaths)
-
-    def __getitem__(self, index: int):
-        fpath = self.fpaths[index]
-        img = Image.open(fpath).convert("RGB")
-
-        if self.transforms is not None:
-            img = self.transforms(img)
-
-        return img
-
-
 def image_grid(x, image_size, num_channels):
     img = x.reshape(-1, image_size, image_size, num_channels)
     w = int(np.sqrt(img.shape[0]))
@@ -289,18 +234,6 @@ def image_grid(x, image_size, num_channels):
         .transpose((0, 2, 1, 3, 4))
         .reshape((w * image_size, w * image_size, num_channels))
     )
-
-
-def get_asset_sample():
-    dataset = "FFHQ"
-    batch_size = 4
-    transform = transforms.ToTensor()
-    dataset = get_dataset(dataset.lower(), root="../assets/", transforms=transform)
-    loader = get_dataloader(dataset, batch_size=3, num_workers=0, train=False)
-    ref_img = next(iter(loader))
-    ref_img = ref_img.detach().cpu().numpy()[2].transpose(1, 2, 0)
-    ref_img = np.tile(ref_img, (batch_size, 1, 1, 1))
-    return ref_img
 
 
 def jax_rgb2ycbcr(x):

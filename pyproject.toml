@@ -33,6 +33,7 @@ tensorflow-probability = "^0.24.0"
 ml-collections = "^0.1.1"
 numpyro = "^0.15.0"
 pot = "^0.9.3"
+pydantic = "^2.7.3"
 
 [tool.poetry.group.dev]
 optional = true

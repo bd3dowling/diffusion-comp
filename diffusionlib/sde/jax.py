@@ -180,8 +180,7 @@ class RVE(RSDE, VE):
 
         return estimate_x_0
 
-    def guide(self, get_guidance_score, observation_map, *args, **kwargs):
-        guidance_score = get_guidance_score(self, observation_map, *args, **kwargs)
+    def guide(self, guidance_score):
         return RVE(guidance_score, self.forward_sde, self.sigma)
 
     def correct(self, corrector):
@@ -235,8 +234,7 @@ class RVP(RSDE, VP):
 
         return estimate_x_0
 
-    def guide(self, get_guidance_score, observation_map, *args, **kwargs):
-        guidance_score = get_guidance_score(self, observation_map, *args, **kwargs)
+    def guide(self, guidance_score):
         return RVP(guidance_score, self.forward_sde, self.beta, self.log_mean_coeff)
 
     def correct(self, corrector):

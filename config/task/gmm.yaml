@@ -48,7 +48,7 @@ sampling:
     denoise_override: true
 
 data:
-    image_size: 800
+    image_size: 80
     num_channels: null
     random_flip: true
     uniform_dequantization: false
@@ -80,12 +80,12 @@ solver:
 
 optim:
     optimizer: Adam
-    lr: 1e-3
+    lr: 1.0e-3
     warmup: false
     weight_decay: false
     grad_clip: null
     seed: 2023
     beta1: 0.9
-    eps: 1e-8
+    eps: 1.0e-8
 
 seed: 42
