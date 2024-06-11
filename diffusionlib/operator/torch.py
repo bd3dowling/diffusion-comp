@@ -7,9 +7,8 @@ from strenum import StrEnum
 from torch.nn import functional as F
 from torchvision import torch
 
-from diffusionlib.util.image import Blurkernel
+from diffusionlib.util.image import Blurkernel, Resizer
 from external.motionblur.motionblur import Kernel
-from external.resizer.resizer import Resizer
 
 __OPERATOR__ = {}
 

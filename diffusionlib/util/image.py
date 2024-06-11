@@ -11,6 +11,223 @@ from torch import nn
 from torch.autograd import Variable
 
 from external.motionblur.motionblur import Kernel
+from external.resizer import resizer
+
+
+class Resizer(nn.Module):
+    """Port external/resizer code for use with torch"""
+
+    def __init__(
+        self, in_shape, scale_factor=None, output_shape=None, kernel=None, antialiasing=True
+    ):
+        super().__init__()
+
+        # First standardize values and fill missing arguments (if needed) by deriving scale from output shape or vice versa
+        scale_factor, output_shape = resizer.fix_scale_and_size(
+            in_shape, output_shape, scale_factor
+        )
+
+        # Choose interpolation method, each method has the matching kernel size
+        method, kernel_width = {
+            "cubic": (resizer.cubic, 4.0),
+            "lanczos2": (resizer.lanczos2, 4.0),
+            "lanczos3": (resizer.lanczos3, 6.0),
+            "box": (resizer.box, 1.0),
+            "linear": (resizer.linear, 2.0),
+            None: (resizer.cubic, 4.0),  # set default interpolation method as cubic
+        }.get(kernel)
+
+        # Antialiasing is only used when downscaling
+        antialiasing *= np.any(np.array(scale_factor) < 1)
+
+        # Sort indices of dimensions according to scale of each dimension. since we are going dim by dim this is efficient
+        sorted_dims = np.argsort(np.array(scale_factor))
+        self.sorted_dims = [int(dim) for dim in sorted_dims if scale_factor[dim] != 1]
+
+        # Iterate over dimensions to calculate local weights for resizing and resize each time in one direction
+        field_of_view_list = []
+        weights_list = []
+        for dim in self.sorted_dims:
+            # for each coordinate (along 1 dim), calculate which coordinates in the input image affect its result and the
+            # weights that multiply the values there to get its result.
+            weights, field_of_view = resizer.contributions(
+                in_shape[dim],
+                output_shape[dim],
+                scale_factor[dim],
+                method,
+                kernel_width,
+                antialiasing,
+            )
+
+            # convert to torch tensor
+            weights = torch.tensor(weights.T, dtype=torch.float32)
+
+            # We add singleton dimensions to the weight matrix so we can multiply it with the big tensor we get for
+            # tmp_im[field_of_view.T], (bsxfun style)
+            weights_list.append(
+                nn.Parameter(
+                    torch.reshape(weights, list(weights.shape) + (len(scale_factor) - 1) * [1]),
+                    requires_grad=False,
+                )
+            )
+            field_of_view_list.append(
+                nn.Parameter(
+                    torch.tensor(field_of_view.T.astype(np.int32), dtype=torch.long),
+                    requires_grad=False,
+                )
+            )
+
+        self.field_of_view = nn.ParameterList(field_of_view_list)
+        self.weights = nn.ParameterList(weights_list)
+
+    def forward(self, in_tensor):
+        x = in_tensor
+
+        # Use the affecting position values and the set of weights to calculate the result of resizing along this 1 dim
+        for dim, fov, w in zip(self.sorted_dims, self.field_of_view, self.weights):
+            # To be able to act on each dim, we swap so that dim 0 is the wanted dim to resize
+            x = torch.transpose(x, dim, 0)
+
+            # This is a bit of a complicated multiplication: x[field_of_view.T] is a tensor of order image_dims+1.
+            # for each pixel in the output-image it matches the positions the influence it from the input image (along 1 dim
+            # only, this is why it only adds 1 dim to 5the shape). We then multiply, for each pixel, its set of positions with
+            # the matching set of weights. we do this by this big tensor element-wise multiplication (MATLAB bsxfun style:
+            # matching dims are multiplied element-wise while singletons mean that the matching dim is all multiplied by the
+            # same number
+            x = torch.sum(x[fov] * w, dim=0)
+
+            # Finally we swap back the axes to the original order
+            x = torch.transpose(x, dim, 0)
+
+        return x
+
+
+class Blurkernel(nn.Module):
+    def __init__(self, blur_type="gaussian", kernel_size=31, std=3.0, device=None):
+        super().__init__()
+        self.blur_type = blur_type
+        self.kernel_size = kernel_size
+        self.std = std
+        self.device = device
+        self.seq = nn.Sequential(
+            nn.ReflectionPad2d(self.kernel_size // 2),
+            nn.Conv2d(3, 3, self.kernel_size, stride=1, padding=0, bias=False, groups=3),
+        )
+
+        self.weights_init()
+
+    def forward(self, x):
+        return self.seq(x)
+
+    def weights_init(self):
+        if self.blur_type == "gaussian":
+            n = np.zeros((self.kernel_size, self.kernel_size))
+            n[self.kernel_size // 2, self.kernel_size // 2] = 1
+            k = scipy.ndimage.gaussian_filter(n, sigma=self.std)
+            k = torch.from_numpy(k)
+            self.k = k
+            for name, f in self.named_parameters():
+                f.data.copy_(k)
+        elif self.blur_type == "motion":
+            k = Kernel(size=(self.kernel_size, self.kernel_size), intensity=self.std).kernelMatrix
+            k = torch.from_numpy(k)
+            self.k = k
+            for name, f in self.named_parameters():
+                f.data.copy_(k)
+
+    def update_weights(self, k):
+        if not torch.is_tensor(k):
+            k = torch.from_numpy(k).to(self.device)
+        for name, f in self.named_parameters():
+            f.data.copy_(k)
+
+    def get_kernel(self):
+        return self.k
+
+
+class Unfolder:
+    def __init__(self, img_size=256, crop_size=128, stride=64):
+        self.img_size = img_size
+        self.crop_size = crop_size
+        self.stride = stride
+
+        self.unfold = nn.Unfold(crop_size, stride=stride)
+        self.dim_size = (img_size - crop_size) // stride + 1
+
+    def __call__(self, x):
+        patch1D = self.unfold(x)
+        patch2D = reshape_patch(patch1D, crop_size=self.crop_size, dim_size=self.dim_size)
+        return patch2D
+
+
+class Folder:
+    def __init__(self, img_size=256, crop_size=128, stride=64):
+        self.img_size = img_size
+        self.crop_size = crop_size
+        self.stride = stride
+
+        self.fold = nn.Fold(img_size, crop_size, stride=stride)
+        self.dim_size = (img_size - crop_size) // stride + 1
+
+    def __call__(self, patch2D):
+        patch1D = reshape_patch_back(patch2D, crop_size=self.crop_size, dim_size=self.dim_size)
+        return self.fold(patch1D)
+
+
+class mask_generator:
+    def __init__(
+        self, mask_type, mask_len_range=None, mask_prob_range=None, image_size=256, margin=(16, 16)
+    ):
+        """
+        (mask_len_range): given in (min, max) tuple.
+        Specifies the range of box size in each dimension
+        (mask_prob_range): for the case of random masking,
+        specify the probability of individual pixels being masked
+        """
+        assert mask_type in ["box", "random", "both", "extreme"]
+        self.mask_type = mask_type
+        self.mask_len_range = mask_len_range
+        self.mask_prob_range = mask_prob_range
+        self.image_size = image_size
+        self.margin = margin
+
+    def __call__(self, img):
+        if self.mask_type == "random":
+            mask = self._retrieve_random(img)
+            return mask
+        elif self.mask_type == "box":
+            mask, t, th, w, wl = self._retrieve_box(img)
+            return mask
+        elif self.mask_type == "extreme":
+            mask, t, th, w, wl = self._retrieve_box(img)
+            mask = 1.0 - mask
+            return mask
+
+    def _retrieve_box(self, img):
+        l, h = self.mask_len_range
+        l, h = int(l), int(h)
+        mask_h = np.random.randint(l, h)
+        mask_w = np.random.randint(l, h)
+        mask, t, tl, w, wh = random_sq_bbox(
+            img, mask_shape=(mask_h, mask_w), image_size=self.image_size, margin=self.margin
+        )
+        return mask, t, tl, w, wh
+
+    def _retrieve_random(self, img):
+        total = self.image_size**2
+        # random pixel sampling
+        l, h = self.mask_prob_range
+        prob = np.random.uniform(l, h)
+        mask_vec = torch.ones([1, self.image_size * self.image_size])
+        samples = np.random.choice(
+            self.image_size * self.image_size, int(total * prob), replace=False
+        )
+        mask_vec[:, samples] = 0
+        mask_b = mask_vec.view(1, self.image_size, self.image_size)
+        mask_b = mask_b.repeat(3, 1, 1)
+        mask = torch.ones_like(img, device=img.device)
+        mask[:, ...] = mask_b
+        return mask
 
 
 def fft2(x):
@@ -104,21 +321,6 @@ def reshape_patch_back(x, crop_size=128, dim_size=3):
     return x
 
 
-class Unfolder:
-    def __init__(self, img_size=256, crop_size=128, stride=64):
-        self.img_size = img_size
-        self.crop_size = crop_size
-        self.stride = stride
-
-        self.unfold = nn.Unfold(crop_size, stride=stride)
-        self.dim_size = (img_size - crop_size) // stride + 1
-
-    def __call__(self, x):
-        patch1D = self.unfold(x)
-        patch2D = reshape_patch(patch1D, crop_size=self.crop_size, dim_size=self.dim_size)
-        return patch2D
-
-
 def center_crop(img, new_width=None, new_height=None):
     width = img.shape[1]
     height = img.shape[0]
@@ -143,20 +345,6 @@ def center_crop(img, new_width=None, new_height=None):
     return center_cropped_img
 
 
-class Folder:
-    def __init__(self, img_size=256, crop_size=128, stride=64):
-        self.img_size = img_size
-        self.crop_size = crop_size
-        self.stride = stride
-
-        self.fold = nn.Fold(img_size, crop_size, stride=stride)
-        self.dim_size = (img_size - crop_size) // stride + 1
-
-    def __call__(self, patch2D):
-        patch1D = reshape_patch_back(patch2D, crop_size=self.crop_size, dim_size=self.dim_size)
-        return self.fold(patch1D)
-
-
 def random_sq_bbox(img, mask_shape, image_size=256, margin=(16, 16)):
     """Generate a random sqaure mask for inpainting"""
     B, C, H, W = img.shape
@@ -174,62 +362,6 @@ def random_sq_bbox(img, mask_shape, image_size=256, margin=(16, 16)):
     mask[..., t : t + h, l : l + w] = 0
 
     return mask, t, t + h, l, l + w
-
-
-class mask_generator:
-    def __init__(
-        self, mask_type, mask_len_range=None, mask_prob_range=None, image_size=256, margin=(16, 16)
-    ):
-        """
-        (mask_len_range): given in (min, max) tuple.
-        Specifies the range of box size in each dimension
-        (mask_prob_range): for the case of random masking,
-        specify the probability of individual pixels being masked
-        """
-        assert mask_type in ["box", "random", "both", "extreme"]
-        self.mask_type = mask_type
-        self.mask_len_range = mask_len_range
-        self.mask_prob_range = mask_prob_range
-        self.image_size = image_size
-        self.margin = margin
-
-    def _retrieve_box(self, img):
-        l, h = self.mask_len_range
-        l, h = int(l), int(h)
-        mask_h = np.random.randint(l, h)
-        mask_w = np.random.randint(l, h)
-        mask, t, tl, w, wh = random_sq_bbox(
-            img, mask_shape=(mask_h, mask_w), image_size=self.image_size, margin=self.margin
-        )
-        return mask, t, tl, w, wh
-
-    def _retrieve_random(self, img):
-        total = self.image_size**2
-        # random pixel sampling
-        l, h = self.mask_prob_range
-        prob = np.random.uniform(l, h)
-        mask_vec = torch.ones([1, self.image_size * self.image_size])
-        samples = np.random.choice(
-            self.image_size * self.image_size, int(total * prob), replace=False
-        )
-        mask_vec[:, samples] = 0
-        mask_b = mask_vec.view(1, self.image_size, self.image_size)
-        mask_b = mask_b.repeat(3, 1, 1)
-        mask = torch.ones_like(img, device=img.device)
-        mask[:, ...] = mask_b
-        return mask
-
-    def __call__(self, img):
-        if self.mask_type == "random":
-            mask = self._retrieve_random(img)
-            return mask
-        elif self.mask_type == "box":
-            mask, t, th, w, wl = self._retrieve_box(img)
-            return mask
-        elif self.mask_type == "extreme":
-            mask, t, th, w, wl = self._retrieve_box(img)
-            mask = 1.0 - mask
-            return mask
 
 
 def unnormalize(img, s=0.95):
@@ -266,80 +398,6 @@ def init_kernel_torch(kernel, device="cuda:0"):
     kernel = kernel.view(1, 1, h, w)
     kernel = kernel.repeat(1, 3, 1, 1)
     return kernel
-
-
-class Blurkernel(nn.Module):
-    def __init__(self, blur_type="gaussian", kernel_size=31, std=3.0, device=None):
-        super().__init__()
-        self.blur_type = blur_type
-        self.kernel_size = kernel_size
-        self.std = std
-        self.device = device
-        self.seq = nn.Sequential(
-            nn.ReflectionPad2d(self.kernel_size // 2),
-            nn.Conv2d(3, 3, self.kernel_size, stride=1, padding=0, bias=False, groups=3),
-        )
-
-        self.weights_init()
-
-    def forward(self, x):
-        return self.seq(x)
-
-    def weights_init(self):
-        if self.blur_type == "gaussian":
-            n = np.zeros((self.kernel_size, self.kernel_size))
-            n[self.kernel_size // 2, self.kernel_size // 2] = 1
-            k = scipy.ndimage.gaussian_filter(n, sigma=self.std)
-            k = torch.from_numpy(k)
-            self.k = k
-            for name, f in self.named_parameters():
-                f.data.copy_(k)
-        elif self.blur_type == "motion":
-            k = Kernel(size=(self.kernel_size, self.kernel_size), intensity=self.std).kernelMatrix
-            k = torch.from_numpy(k)
-            self.k = k
-            for name, f in self.named_parameters():
-                f.data.copy_(k)
-
-    def update_weights(self, k):
-        if not torch.is_tensor(k):
-            k = torch.from_numpy(k).to(self.device)
-        for name, f in self.named_parameters():
-            f.data.copy_(k)
-
-    def get_kernel(self):
-        return self.k
-
-
-class exact_posterior:
-    def __init__(self, betas, sigma_0, label_dim, input_dim):
-        self.betas = betas
-        self.sigma_0 = sigma_0
-        self.label_dim = label_dim
-        self.input_dim = input_dim
-
-    def py_given_x0(self, x0, y, A, verbose=False):
-        norm_const = 1 / ((2 * np.pi) ** self.input_dim * self.sigma_0**2)
-        exp_in = -1 / (2 * self.sigma_0**2) * torch.linalg.norm(y - A(x0)) ** 2
-        if not verbose:
-            return norm_const * torch.exp(exp_in)
-        else:
-            return norm_const * torch.exp(exp_in), norm_const, exp_in
-
-    def pxt_given_x0(self, x0, xt, t, verbose=False):
-        beta_t = self.betas[t]
-        norm_const = 1 / ((2 * np.pi) ** self.label_dim * beta_t)
-        exp_in = -1 / (2 * beta_t) * torch.linalg.norm(xt - np.sqrt(1 - beta_t) * x0) ** 2
-        if not verbose:
-            return norm_const * torch.exp(exp_in)
-        else:
-            return norm_const * torch.exp(exp_in), norm_const, exp_in
-
-    def prod_logsumexp(self, x0, xt, y, A, t):
-        py_given_x0_density, pyx0_nc, pyx0_ei = self.py_given_x0(x0, y, A, verbose=True)
-        pxt_given_x0_density, pxtx0_nc, pxtx0_ei = self.pxt_given_x0(x0, xt, t, verbose=True)
-        summand = (pyx0_nc * pxtx0_nc) * torch.exp(-pxtx0_ei - pxtx0_ei)
-        return torch.logsumexp(summand, dim=0)
 
 
 def map2tensor(gray_map):
