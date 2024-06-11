@@ -12,7 +12,7 @@ from diffusionlib.dataset.tmpdtorch import _get_dataset
 from diffusionlib.model.config import ModelConfig, ModelName
 from diffusionlib.model.torch import create_model
 from diffusionlib.noise.torch import get_noise
-from diffusionlib.operator.torch import get_operator
+from diffusionlib.operator import get_operator
 from diffusionlib.sampler.torch import create_sampler
 from diffusionlib.util.array import to_numpy
 from diffusionlib.util.image import mask_generator
