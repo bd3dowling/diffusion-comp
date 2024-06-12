@@ -34,6 +34,7 @@ ml-collections = "^0.1.1"
 numpyro = "^0.15.0"
 pot = "^0.9.3"
 pydantic = "^2.7.3"
+probit = "^0.0.2"
 
 [tool.poetry.group.dev]
 optional = true

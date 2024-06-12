@@ -25,7 +25,33 @@ dpi_val = 1200
 cmap = "magma"
 
 
-def plot_heatmap(samples, area_bounds, lengthscale=350.0):
+def plot_heatmap(samples, area_bounds, lengthscale=350.0, fname="plot_heatmap") -> None:
+  """Plots a heatmap of all samples in the area area_bounds x area_bounds.
+  Args:
+    samples: locations of particles shape (num_particles, 2)
+  """
+
+  def small_kernel(z, area_bounds):
+    a = jnp.linspace(area_bounds[0], area_bounds[1], 512)
+    x, y = jnp.meshgrid(a, a)
+    dist = (x - z[0]) ** 2 + (y - z[1]) ** 2
+    hm = jnp.exp(-lengthscale * dist)
+    return hm
+
+  @jit  # jit most of the code, but use the helper functions since cannot jit all of it because of plt
+  def produce_heatmap(samples, area_bounds):
+    return jnp.sum(vmap(small_kernel, in_axes=(0, None))(samples, area_bounds), axis=0)
+
+  hm = produce_heatmap(samples, area_bounds)
+  extent = area_bounds + area_bounds
+  plt.imshow(hm, interpolation="nearest", extent=extent)
+  ax = plt.gca()
+  ax.invert_yaxis()
+  plt.savefig(fname + ".png")
+  plt.close()
+
+
+def _plot_heatmap(samples, area_bounds, lengthscale=350.0):
     """Plots a heatmap of all samples in the area area_bounds x area_bounds.
     Args:
       samples: locations of particles shape (num_particles, 2)

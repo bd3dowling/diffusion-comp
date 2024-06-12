@@ -14,7 +14,7 @@ class _TrainingConfig(BaseModel):
     likelihood_weighting: bool
     score_scaling: bool
     reduce_mean: bool
-    log_epoch_freq: int
+    log_epoch_freq: int | None = None
     log_step_freq: int
     pmap: bool
     n_jitted_steps: int
@@ -33,6 +33,7 @@ class _EvalConfig(BaseModel):
     enable_loss: bool
     enable_bpd: bool
     bpd_dataset: str
+    pmap: bool = True
 
 
 class _SamplingConfig(BaseModel):
@@ -81,10 +82,10 @@ class _ModelConfig(BaseModel):
 class _SolverConfig(BaseModel):
     num_outer_steps: int
     outer_solver: str
-    eta: float
+    eta: float | None = None
     inner_solver: str | None
-    stsl_scale_hyperparameter: float
-    dps_scale_hyperparameter: float
+    stsl_scale_hyperparameter: float | None = None
+    dps_scale_hyperparameter: float | None = None
     num_inner_steps: int
     dt: None
     epsilon: None
@@ -94,10 +95,10 @@ class _SolverConfig(BaseModel):
 class _OptimConfig(BaseModel):
     optimizer: str
     lr: float
-    warmup: bool
+    warmup: bool | int
     weight_decay: bool
-    grad_clip: None
-    seed: int
+    grad_clip: float | None
+    seed: int = 0
     beta1: float
     eps: float
 
@@ -113,8 +114,8 @@ class TaskConfig(BaseModel):
     seed: int
 
     @classmethod
-    def load(cls) -> "TaskConfig":
-        task_conf_path = files(task) / "gmm.yaml"
+    def load(cls, name: str = "gmm") -> "TaskConfig":
+        task_conf_path = files(task) / f"{name}.yaml"
 
         with task_conf_path.open() as f:
             task_conf_raw: dict[str, Any] = yaml.safe_load(f)

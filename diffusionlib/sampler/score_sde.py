@@ -1,5 +1,3 @@
-# FROM SCORE_SDE
-
 """Various sampling methods."""
 import abc
 import functools
@@ -138,7 +136,7 @@ class Predictor(abc.ABC):
           x: A JAX array of the next state.
           x_mean: A JAX array. The next state without random noise. Useful for denoising.
         """
-        pass
+        raise NotImplementedError
 
 
 class Corrector(abc.ABC):
@@ -164,7 +162,7 @@ class Corrector(abc.ABC):
           x: A JAX array of the next state.
           x_mean: A JAX array. The next state without random noise. Useful for denoising.
         """
-        pass
+        raise NotImplementedError
 
 
 @register_predictor(name="euler_maruyama")

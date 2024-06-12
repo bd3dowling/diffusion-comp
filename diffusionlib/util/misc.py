@@ -322,6 +322,7 @@ def get_sampler(
         else:
             assert x_0.shape == shape
             x = x_0
+
         if not stack_samples:
             (_, x, x_mean), _ = scan(outer_step, (rng, x, x), outer_ts, reverse=True)
             return inverse_scaler(x_mean if denoise else x), num_function_evaluations

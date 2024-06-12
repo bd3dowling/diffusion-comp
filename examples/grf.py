@@ -2,31 +2,35 @@
 import logging
 import time
 
-import diffusionlib.sde as sde_lib
 import jax
 import jax.numpy as jnp
 import jax.random as random
 import lab as B
 import matplotlib.pyplot as plt
 import numpy as np
-from absl import app, flags
-from diffusionlib.plot import plot_heatmap, plot_samples, plot_samples_1D
-from diffusionlib.solvers import EulerMaruyama
-from diffusionlib.utils import get_sampler, get_times
 from jax import jit, vmap
-from ml_collections.config_flags import config_flags
 from mlkernels import Matern52
 from probit.approximators import LaplaceGP as GP
 from probit.utilities import log_gaussian_likelihood
-from diffusionlib.plot import Distance2, Wasserstein2, plot
-from diffusionlib.samplers import get_cs_sampler
 
-FLAGS = flags.FLAGS
-config_flags.DEFINE_config_file(
-    "config", "./configs/grf.py", "Training configuration.", lock_config=True
+import diffusionlib.sde.jax as sde_lib
+from diffusionlib.config.task import TaskConfig
+from diffusionlib.sampler.jax import EulerMaruyama, get_cs_sampler
+from diffusionlib.util.misc import (
+    get_linear_beta_function,
+    get_sampler,
+    get_sigma_function,
+    get_times,
 )
-flags.DEFINE_string("workdir", "./workdir/", "Work directory.")
-flags.mark_flags_as_required(["workdir", "config"])
+from diffusionlib.util.plot import (
+    Distance2,
+    Wasserstein2,
+    plot,
+    plot_heatmap,
+    plot_samples,
+    plot_samples_1D,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -53,31 +57,25 @@ def sample_image_rgb(rng, num_samples, image_size, kernel, num_channels):
     return u, C, x, z
 
 
-def main(argv):
-    config = FLAGS.config
+def main():
+    config = TaskConfig.load("grf")
+
     jax.default_device = jax.devices()[0]
-    # Tip: use CUDA_VISIBLE_DEVICES to restrict the devices visible to jax
-    # ... devices must be all the same model for pmap to work
-    num_devices = int(jax.local_device_count()) if config.eval.pmap else 1
-    logging.info(f"num_devices={num_devices}, pmap={config.eval.pmap}")
+    num_devices = int(jax.local_device_count())
 
     # Setup SDE
     if config.training.sde.lower() == "vpsde":
-        from diffusionlib.utils import get_linear_beta_function
-
         beta, log_mean_coeff = get_linear_beta_function(
             beta_min=config.model.beta_min, beta_max=config.model.beta_max
         )
         sde = sde_lib.VP(beta, log_mean_coeff)
     elif config.training.sde.lower() == "vesde":
-        from diffusionlib.utils import get_sigma_function
-
         sigma = get_sigma_function(
             sigma_min=config.model.sigma_min, sigma_max=config.model.sigma_max
         )
         sde = sde_lib.VE(sigma)
     else:
-        raise NotImplementedError(f"SDE {config.training.SDE} unknown.")
+        raise NotImplementedError(f"SDE {config.training.sde} unknown.")
 
     rng = random.PRNGKey(2023)
     samples, C, x, X = sample_image_rgb(
@@ -212,45 +210,6 @@ def main(argv):
             f"diffusion_prior delta_mean={delta_mean}, delta_var={delta_var}, delta_cov={delta_cov}"
         )
 
-        # logging.info(delta_t_corr)  # a value of 0.05 (for 512 samples) are indistinguisable from
-        # true samples due to emprical covariance error
-        # but it is possible to get a value as low as 0.005 from many more true samples
-        # logging.info(delta_corr)  # a value of 0.1 are good samples
-
-        # # Running the reverse SDE with the true score
-        # # Get the outer loop of a numerical solver, also known as "predictor"
-        # outer_solver = EulerMaruyama(sde.reverse(true_score), ts)
-
-        # sampler = get_sampler((config.eval.batch_size//num_devices, config.data.image_size, config.data.image_size, config.data.num_channels), outer_solver, inner_solver, denoise=True)
-        # if config.eval.pmap:
-        #     rng, *sample_rng = random.split(rng, 1 + num_devices)
-        #     sample_rng = jnp.asarray(sample_rng)
-        # else:
-        #     rng, sample_rng = random.split(rng, 1 + num_devices)
-        # q_samples = sampler(sample_rng)
-        # q_samples = q_samples.reshape(config.eval.batch_size, config.data.image_size**2)
-
-        # C_emp = jnp.cov(q_samples[:, :].T)
-        # m_emp = jnp.mean(q_samples[:, :].T, axis=1)
-        # corr_emp = jnp.corrcoef(q_samples[:, :].T)
-        # delta_corr = jnp.linalg.norm(C - corr_emp) / config.data.image_size
-        # delta_cov = jnp.linalg.norm(C - C_emp) / config.data.image_size
-        # delta_var = jnp.linalg.norm(jnp.diag(C) - jnp.diag(C_emp)) / config.data.image_size
-        # delta_mean = jnp.linalg.norm(m_emp) / config.data.image_size
-        # logging.info("prior_PC_analytic delta_mean={}, delta_var={}, delta_cov={}".format(
-        #     delta_mean, delta_var, delta_cov))
-        # plot_heatmap(samples=q_samples[:, [0, 1]], area_bounds=[-3., 3.], fname="heatmap PC analytic score")
-
-        # q_samples = q_samples.reshape(config.eval.batch_size, config.data.image_size, config.data.image_size)
-        # q_samples = np.expand_dims(q_samples, axis=3)
-        # plot_samples(p_samples[:64], image_size=config.data.image_size, num_channels=config.data.num_channels, fname="samples prior PC")
-        # plot_samples_1D(q_samples[..., 0], image_size=config.data.image_size, fname="samples prior PC 1D", alpha=FG_ALPHA)
-
-        # logging.info(delta_t_corr)  # a value of 0.05 (for 512 samples) are indistinguisable from
-        # # true samples due to emprical covariance error
-        # # but it is possible to get a value as low as 0.005 from many more true samples
-        # logging.info(delta_corr)  # a value of 0.1 are good samples
-
     num_obs = int(config.data.image_size**2 / 64)
     idx_obs = random.choice(rng, config.data.image_size**2, shape=(num_obs,), replace=False)
     H = jnp.zeros((num_obs, config.data.image_size**2))
@@ -261,7 +220,8 @@ def main(argv):
     y_data = y.copy()
     X_data = X[idx_obs, :]
 
-    if "plus" in config.sampling.cs_method or "mask" in config.sampling.cs_method:
+    cs_method = config.sampling.cs_method
+    if cs_method and ("plus" in cs_method or "mask" in cs_method):
         mask = jnp.zeros(
             (config.data.image_size * config.data.image_size * config.data.num_channels,)
         )
@@ -633,4 +593,4 @@ def main(argv):
 
 
 if __name__ == "__main__":
-    app.run(main)
+    main()
