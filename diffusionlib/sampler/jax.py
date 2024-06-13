@@ -811,7 +811,6 @@ def get_markov_chain(config, score):
         raise NotImplementedError(f"Markov Chain {config.solver.outer_solver} unknown.")
 
 
-
 class Solver(ABC):
     """SDE solver abstract class. Functions are designed for a mini-batch of inputs."""
 
@@ -1426,6 +1425,7 @@ class DDIMVE(Solver):
 
 
 # FROM diffusionjax
+
 
 class STSL(DDIMVP):
     def __init__(

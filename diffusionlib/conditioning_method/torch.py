@@ -1,10 +1,10 @@
 """Conditioning method definitions and registry."""
 
 from abc import ABC, abstractmethod
+from enum import StrEnum
 
 import functorch
 import torch
-from strenum import StrEnum
 
 __CONDITIONING_METHOD__ = {}
 

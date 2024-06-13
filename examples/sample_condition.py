@@ -8,10 +8,10 @@ import torch
 import yaml
 
 from diffusionlib.conditioning_method.torch import get_conditioning_method
-from diffusionlib.dataset.tmpdtorch import _get_dataset
+from diffusionlib.dataset import get_dataset
 from diffusionlib.model.config import ModelConfig, ModelName
 from diffusionlib.model.torch import create_model
-from diffusionlib.noise.torch import get_noise
+from diffusionlib.noise import get_noise
 from diffusionlib.operator import get_operator
 from diffusionlib.sampler.torch import create_sampler
 from diffusionlib.util.array import to_numpy
@@ -116,8 +116,7 @@ def main():
     os.makedirs(os.path.join(out_path, "progress"), exist_ok=True)
 
     # Prepare TF dataloader
-    num_devices = 1
-    _, eval_ds, _ = _get_dataset(num_devices, 1, "FFHQ", evaluation=True)
+    eval_ds = get_dataset("ffhq").create_dataset(1)
 
     # Exception) In case of inpainting, we need to generate a mask
     if measure_config["operator"]["name"] == "inpainting":

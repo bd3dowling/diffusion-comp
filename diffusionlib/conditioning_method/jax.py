@@ -45,6 +45,7 @@ def get_conditioning_method(name: ConditioningMethodName, *args, **kwargs):
         raise NameError(f"Name {name} is not defined!")
     return __CONDITIONING_METHOD__[name](*args, **kwargs)
 
+
 @register_conditioning_method(ConditioningMethodName.DIFFUSION_POSTERIOR_SAMPLING)
 class DPS:
     """

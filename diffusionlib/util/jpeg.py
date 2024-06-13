@@ -5,17 +5,11 @@ Useful references for understanding this code
 https://www.cl.cam.ac.uk/teaching/1011/R08/jpeg/acs10-jpeg.pdf JPEG tutorial Andrew B. Lewis
 CUED IIB 4F8: Image Coding 2019-2020 - Lecture 3: The DCT and the JPEG Standard J Lasenby Signal Processing Group, Engineering Department, Cambridge, UK
 """
-from glob import glob
-from typing import Callable, Optional
 
 import jax
 import jax.numpy as jnp
 import numpy as np
-import torchvision.transforms as transforms
 from jax import vjp
-from PIL import Image
-from torch.utils.data import DataLoader
-from torchvision.datasets import VisionDataset
 
 
 def dct1(x):
@@ -65,7 +59,6 @@ def dct(x, norm=None):
         V = V.at[:, 1:].set(V[:, 1:] / (jnp.sqrt(N / 2) * 2))
 
     return 2 * V.reshape(x_shape)
-
 
 
 def idct(x, norm=None):

@@ -1,12 +1,12 @@
 """Operator/task definitions and registry."""
 
 from abc import ABC, abstractmethod
+from enum import StrEnum
 from functools import partial
 from typing import final, overload
 
 import torch
 from jaxtyping import Array
-from strenum import StrEnum
 from torch import Tensor
 from torch.nn import functional as F
 

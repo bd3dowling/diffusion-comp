@@ -1,17 +1,16 @@
 """Pydantic models for configs."""
 
+from enum import StrEnum
 from importlib.abc import Traversable
 from importlib.resources import files
 from typing import Any
 
 import yaml
 from pydantic import BaseModel
-from strenum import StrEnum
 
 import config
 import config.model
 import data.model_checkpoint
-import data.samples
 
 
 class ModelName(StrEnum):
@@ -19,7 +18,7 @@ class ModelName(StrEnum):
     IMAGENET = "imagenet"
 
 
-class ModelConfig(BaseModel, frozen=True):
+class ModelConfig(BaseModel):
     image_size: int
     num_channels: int
     num_res_blocks: int

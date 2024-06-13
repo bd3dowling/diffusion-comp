@@ -1,18 +1,10 @@
 """Utility functions for working with numpy, jax and torch arrays/tensors."""
 
-import numpy as np
-import torch
-
-from typing import Any
 
 import jax.numpy as jnp
-import matplotlib.animation as animation
-import matplotlib.pyplot as plt
-import seaborn as sns
-from jax import jit, vmap
+import numpy as np
+import torch
 from jaxtyping import Array
-from matplotlib.animation import FuncAnimation
-from matplotlib.image import AxesImage
 
 
 def extract_and_expand(array, time, target):
@@ -49,4 +41,4 @@ def expand_as(array, target):
 
 def to_numpy(x):
     x = x.detach().cpu().squeeze().numpy()
-    return np.clip(np.transpose(x, (1, 2, 0)), a_min=0., a_max=1.)
+    return np.clip(np.transpose(x, (1, 2, 0)), a_min=0.0, a_max=1.0)

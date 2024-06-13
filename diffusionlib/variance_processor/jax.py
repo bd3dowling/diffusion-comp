@@ -3,10 +3,10 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from enum import StrEnum, auto
 
 import jax.numpy as jnp
 from jaxtyping import Array
-from strenum import StrEnum
 
 from diffusionlib.util.array import extract_and_expand
 
@@ -24,10 +24,10 @@ def register_var_processor(name: VarianceProcessorType):
 
 
 class VarianceProcessorType(StrEnum):
-    FIXED_SMALL = "fixed_small"
-    FIXED_LARGE = "fixed_large"
-    LEARNED = "learned"
-    LEARNED_RANGE = "learned_range"
+    FIXED_SMALL = auto()
+    FIXED_LARGE = auto()
+    LEARNED = auto()
+    LEARNED_RANGE = auto()
 
 
 @dataclass

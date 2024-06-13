@@ -3,10 +3,10 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from enum import StrEnum
 
 import jax.numpy as jnp
 from jaxtyping import Array
-from strenum import StrEnum
 
 from diffusionlib.util.array import extract_and_expand
 

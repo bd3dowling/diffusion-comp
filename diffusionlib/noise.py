@@ -1,21 +1,22 @@
 """Noise type definitions and registry."""
+# TODO: coalsce with jax approach
 
 from abc import ABC, abstractmethod
+from enum import StrEnum, auto
 
 import numpy as np
-from strenum import StrEnum
 from torchvision import torch
 
 __NOISE__ = {}
 
 
-class Noise(StrEnum):
-    CLEAN = "clean"
-    GAUSSIAN = "gaussian"
-    POISSON = "poisson"
+class NoiseName(StrEnum):
+    CLEAN = auto()
+    GAUSSIAN = auto()
+    POISSON = auto()
 
 
-def register_noise(name: Noise):
+def register_noise(name: NoiseName):
     def wrapper(cls):
         if __NOISE__.get(name, None):
             raise NameError(f"Name {name} is already defined!")
@@ -25,7 +26,7 @@ def register_noise(name: Noise):
     return wrapper
 
 
-def get_noise(name: Noise, **kwargs):
+def get_noise(name: NoiseName, **kwargs):
     if __NOISE__.get(name, None) is None:
         raise NameError(f"Name {name} is not defined.")
     noiser = __NOISE__[name](**kwargs)
@@ -33,7 +34,7 @@ def get_noise(name: Noise, **kwargs):
     return noiser
 
 
-class _Noise(ABC):
+class Noise(ABC):
     def __call__(self, data):
         return self.forward(data)
 
@@ -42,14 +43,14 @@ class _Noise(ABC):
         raise NotImplementedError
 
 
-@register_noise(name=Noise.CLEAN)
-class Clean(_Noise):
+@register_noise(name=NoiseName.CLEAN)
+class Clean(Noise):
     def forward(self, data):
         return data
 
 
-@register_noise(name=Noise.GAUSSIAN)
-class GaussianNoise(_Noise):
+@register_noise(name=NoiseName.GAUSSIAN)
+class GaussianNoise(Noise):
     def __init__(self, sigma):
         self.sigma = sigma
 
@@ -57,8 +58,8 @@ class GaussianNoise(_Noise):
         return data + torch.randn_like(data, device=data.device) * self.sigma
 
 
-@register_noise(name=Noise.POISSON)
-class PoissonNoise(_Noise):
+@register_noise(name=NoiseName.POISSON)
+class PoissonNoise(Noise):
     def __init__(self, rate):
         self.rate = rate
 

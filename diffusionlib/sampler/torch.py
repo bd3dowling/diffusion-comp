@@ -2,11 +2,11 @@
 
 import math
 import os
+from enum import StrEnum, auto
 
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from strenum import StrEnum
 from tqdm.auto import tqdm
 
 from diffusionlib.mean_processor.torch import get_mean_processor
@@ -18,8 +18,8 @@ __SAMPLER__ = {}
 
 
 class Sampler(StrEnum):
-    DDPM = "ddpm"
-    DDIM = "ddim"
+    DDPM = auto()
+    DDIM = auto()
 
 
 def register_sampler(name: Sampler):
