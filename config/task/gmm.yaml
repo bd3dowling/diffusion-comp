@@ -25,7 +25,7 @@ eval:
     bpd_dataset: test
 
 sampling:
-    cs_method: null
+    cs_method: pigdmvp
     noise_std: 1.0
     denoise: true # work out what denoise_override is
     innovation: true # this will probably be superceded

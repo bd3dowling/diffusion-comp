@@ -1,0 +1,30 @@
+---
+attention_type: ddpm
+attn_resolutions: [16]
+beta_max: 20
+beta_min: 0.1
+ch_mult: [1, 2, 2, 2]
+conditional: true
+conv_size: 3
+dropout: 0.1
+ema_rate: 0.9999
+embedding_type: positional
+fir: false
+fir_kernel: [1, 3, 3, 1]
+fourier_scale: 16
+init_scale: 0
+name: ncsnpp
+nf: 128
+nonlinearity: swish
+normalization: group_norm
+num_res_blocks: 4
+num_scales: 1000
+progressive: none
+progressive_combine: sum
+progressive_input: none
+resamp_with_conv: true
+resblock_type: biggan
+scale_by_sigma: false
+sigma_max: 50
+sigma_min: 0.01
+skip_rescale: true

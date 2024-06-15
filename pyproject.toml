@@ -35,6 +35,16 @@ pot = "^0.9.3"
 pydantic = "^2.7.3"
 probit = "^0.0.2"
 
+# Extras (for external use)
+jax = {extras = ["cuda12"], version = "^0.4.28"}
+torch = {version = "^2.3.1", optional = true}
+torchvision = {version = "^0.18.1", optional = true}
+torchaudio = {version = "^2.3.1", optional = true}
+
+[tool.poetry.extras]
+cuda = ["jax", "torch", "torchvision", "torchaudio"] 
+
+# Optionals (for internal dev)
 [tool.poetry.group.dev]
 optional = true
 
@@ -61,7 +71,6 @@ jax-metal = "^0.0.7"
 jax = "^0.4.26"
 jaxlib = "^0.4.26"
 
-
 [[tool.poetry.source]]
 name = "nvidia"
 url = "https://pypi.nvidia.com/"
@@ -87,7 +96,6 @@ strict = true
 select = ["E", "F", "I", "N", "W", "UP"]
 
 ignore = [
-    "N805", # invalid-first-argument-name-for-method
     "N812", # lowercase-imported-as-non-lowercase
 ]
 

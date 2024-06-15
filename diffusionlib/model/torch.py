@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from diffusionlib.model.config import ModelConfig
+from diffusionlib.config_definition.model import ModelConfig
 from diffusionlib.util.neural_network import (
     avg_pool_nd,
     checkpoint,
