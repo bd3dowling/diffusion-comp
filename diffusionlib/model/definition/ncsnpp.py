@@ -21,19 +21,20 @@ import jax.numpy as jnp
 import ml_collections
 import numpy as np
 
-from . import layers, layerspp, normalization, utils
+from diffusionlib.model.layers import normalization, score
+from diffusionlib.model import registry
 
-ResnetBlockDDPM = layerspp.ResnetBlockDDPMpp
-ResnetBlockBigGAN = layerspp.ResnetBlockBigGANpp
-Combine = layerspp.Combine
-conv3x3 = layerspp.conv3x3
-conv1x1 = layerspp.conv1x1
-get_act = layers.get_act
+ResnetBlockDDPM = score.ResnetBlockDDPMpp
+ResnetBlockBigGAN = score.ResnetBlockBigGANpp
+Combine = score.Combine
+conv3x3 = score.conv3x3
+conv1x1 = score.conv1x1
+get_act = score.get_act
 get_normalization = normalization.get_normalization
-default_initializer = layers.default_init
+default_initializer = score.default_init
 
 
-@utils.register_model(name="ncsnpp")
+@registry.register_model(name="ncsnpp")
 class NCSNpp(nn.Module):
     """NCSN++ model"""
 
@@ -44,7 +45,7 @@ class NCSNpp(nn.Module):
         # config parsing
         config = self.config
         act = get_act(config)
-        sigmas = utils.get_sigmas(config)
+        sigmas = registry.get_sigmas(config)
 
         nf = config.model.nf
         ch_mult = config.model.ch_mult
@@ -76,7 +77,7 @@ class NCSNpp(nn.Module):
                 config.training.continuous
             ), "Fourier features are only used for continuous training."
             used_sigmas = time_cond
-            temb = layerspp.GaussianFourierProjection(
+            temb = score.GaussianFourierProjection(
                 embedding_size=nf, scale=config.model.fourier_scale
             )(jnp.log(used_sigmas))
 
@@ -84,7 +85,7 @@ class NCSNpp(nn.Module):
             # Sinusoidal positional embeddings.
             timesteps = time_cond
             used_sigmas = sigmas[time_cond.astype(jnp.int32)]
-            temb = layers.get_timestep_embedding(timesteps, nf)
+            temb = score.get_timestep_embedding(timesteps, nf)
         else:
             raise ValueError(f"embedding type {embedding_type} unknown.")
 
@@ -95,33 +96,33 @@ class NCSNpp(nn.Module):
             temb = None
 
         AttnBlock = functools.partial(
-            layerspp.AttnBlockpp, init_scale=init_scale, skip_rescale=skip_rescale
+            score.AttnBlockpp, init_scale=init_scale, skip_rescale=skip_rescale
         )
 
         Upsample = functools.partial(
-            layerspp.Upsample, with_conv=resamp_with_conv, fir=fir, fir_kernel=fir_kernel
+            score.Upsample, with_conv=resamp_with_conv, fir=fir, fir_kernel=fir_kernel
         )
 
         if progressive == "output_skip":
             pyramid_upsample = functools.partial(
-                layerspp.Upsample, fir=fir, fir_kernel=fir_kernel, with_conv=False
+                score.Upsample, fir=fir, fir_kernel=fir_kernel, with_conv=False
             )
         elif progressive == "residual":
             pyramid_upsample = functools.partial(
-                layerspp.Upsample, fir=fir, fir_kernel=fir_kernel, with_conv=True
+                score.Upsample, fir=fir, fir_kernel=fir_kernel, with_conv=True
             )
 
         Downsample = functools.partial(
-            layerspp.Downsample, with_conv=resamp_with_conv, fir=fir, fir_kernel=fir_kernel
+            score.Downsample, with_conv=resamp_with_conv, fir=fir, fir_kernel=fir_kernel
         )
 
         if progressive_input == "input_skip":
             pyramid_downsample = functools.partial(
-                layerspp.Downsample, fir=fir, fir_kernel=fir_kernel, with_conv=False
+                score.Downsample, fir=fir, fir_kernel=fir_kernel, with_conv=False
             )
         elif progressive_input == "residual":
             pyramid_downsample = functools.partial(
-                layerspp.Downsample, fir=fir, fir_kernel=fir_kernel, with_conv=True
+                score.Downsample, fir=fir, fir_kernel=fir_kernel, with_conv=True
             )
 
         if resblock_type == "ddpm":

@@ -1,4 +1,4 @@
-"""Posterior mean and variance processor definitions and registries."""
+"""Posterior mean processor definitions and registry."""
 
 from abc import ABC, abstractmethod
 

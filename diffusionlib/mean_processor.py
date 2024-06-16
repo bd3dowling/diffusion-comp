@@ -1,5 +1,4 @@
 """Posterior mean processor definitions and registries."""
-from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -10,7 +9,13 @@ from jaxtyping import Array
 
 from diffusionlib.util.array import extract_and_expand
 
-__MODEL_MEAN_PROCESSOR__: dict[MeanProcessorType, type[MeanProcessor]] = {}
+__MODEL_MEAN_PROCESSOR__: dict["MeanProcessorType", type["MeanProcessor"]] = {}
+
+
+class MeanProcessorType(StrEnum):
+    PREVIOUS = "previous"
+    START = "start"
+    EPSILON = "epsilon"
 
 
 def register_mean_processor(name: MeanProcessorType):
@@ -21,12 +26,6 @@ def register_mean_processor(name: MeanProcessorType):
         return cls
 
     return wrapper
-
-
-class MeanProcessorType(StrEnum):
-    PREVIOUS = "previous"
-    START = "start"
-    EPSILON = "epsilon"
 
 
 @dataclass
@@ -47,7 +46,7 @@ class MeanProcessor(ABC):
         )
 
     @classmethod
-    def from_name(cls, name: MeanProcessorType, **kwargs) -> MeanProcessor:
+    def from_name(cls, name: MeanProcessorType, **kwargs) -> "MeanProcessor":
         if not __MODEL_MEAN_PROCESSOR__.get(name):
             raise NameError(f"Name {name} is not defined.")
         return __MODEL_MEAN_PROCESSOR__[name](**kwargs)

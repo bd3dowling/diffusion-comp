@@ -9,10 +9,10 @@ import numpy as np
 import torch
 from tqdm.auto import tqdm
 
-from diffusionlib.mean_processor.torch import get_mean_processor
+from diffusionlib._mean_processor.torch import get_mean_processor
 from diffusionlib.util.array import extract_and_expand
 from diffusionlib.util.image import clear_color
-from diffusionlib.variance_processor.torch import get_var_processor
+from diffusionlib._variance_processor.torch import get_var_processor
 
 __SAMPLER__ = {}
 

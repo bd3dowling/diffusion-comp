@@ -20,7 +20,7 @@ import functools
 import flax.linen as nn
 import ml_collections
 
-from .layers import (
+from ..layers.score import (
     ConditionalResidualBlock,
     CondRefineBlock,
     RefineBlock,
@@ -28,8 +28,8 @@ from .layers import (
     get_act,
     ncsn_conv3x3,
 )
-from .normalization import get_normalization
-from .utils import get_sigmas, register_model
+from ..layers.normalization import get_normalization
+from ..registry import get_sigmas, register_model
 
 CondResidualBlock = ConditionalResidualBlock
 conv3x3 = ncsn_conv3x3

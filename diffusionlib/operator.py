@@ -1,7 +1,7 @@
 """Operator/task definitions and registry."""
 
 from abc import ABC, abstractmethod
-from enum import StrEnum
+from enum import StrEnum, auto
 from functools import partial
 from typing import final, overload
 
@@ -19,11 +19,11 @@ JaxOrTorchArray = Array | Tensor
 
 
 class OperatorName(StrEnum):
-    NOISE = "noise"
-    SUPER_RESOLUTION = "super_resolution"
-    MOTION_BLUR = "motion_blur"
-    GAUSSIAN_BLUR = "gaussian_blur"
-    INPAINTING = "inpainting"
+    NOISE = auto()
+    SUPER_RESOLUTION = auto()
+    MOTION_BLUR = auto()
+    GAUSSIAN_BLUR = auto()
+    INPAINTING = auto()
 
 
 def register_operator(name: OperatorName):

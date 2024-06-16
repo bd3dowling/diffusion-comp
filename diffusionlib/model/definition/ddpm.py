@@ -24,20 +24,21 @@ import flax.linen as nn
 import jax.numpy as jnp
 import ml_collections
 
-from . import layers, normalization, utils
+from diffusionlib.model import registry
+from diffusionlib.model.layers.jax import normalization, score
 
-RefineBlock = layers.RefineBlock
-ResidualBlock = layers.ResidualBlock
-ResnetBlockDDPM = layers.ResnetBlockDDPM
-Upsample = layers.Upsample
-Downsample = layers.Downsample
-conv3x3 = layers.ddpm_conv3x3
-get_act = layers.get_act
+RefineBlock = score.RefineBlock
+ResidualBlock = score.ResidualBlock
+ResnetBlockDDPM = score.ResnetBlockDDPM
+Upsample = score.Upsample
+Downsample = score.Downsample
+conv3x3 = score.ddpm_conv3x3
+get_act = score.get_act
 get_normalization = normalization.get_normalization
-default_initializer = layers.default_init
+default_initializer = score.default_init
 
 
-@utils.register_model(name="ddpm")
+@registry.register_model(name="ddpm")
 class DDPM(nn.Module):
     """DDPM model architecture."""
 
@@ -49,7 +50,7 @@ class DDPM(nn.Module):
         config = self.config
         act = get_act(config)
         normalize = get_normalization(config)
-        sigmas = utils.get_sigmas(config)
+        sigmas = registry.get_sigmas(config)
 
         nf = config.model.nf
         ch_mult = config.model.ch_mult
@@ -59,7 +60,7 @@ class DDPM(nn.Module):
         resamp_with_conv = config.model.resamp_with_conv
         num_resolutions = len(ch_mult)
 
-        AttnBlock = functools.partial(layers.AttnBlock, normalize=normalize)
+        AttnBlock = functools.partial(score.AttnBlock, normalize=normalize)
         ResnetBlock = functools.partial(
             ResnetBlockDDPM, act=act, normalize=normalize, dropout=dropout
         )
@@ -67,7 +68,7 @@ class DDPM(nn.Module):
         if config.model.conditional:
             # timestep/scale embedding
             timesteps = labels
-            temb = layers.get_timestep_embedding(timesteps, nf)
+            temb = score.get_timestep_embedding(timesteps, nf)
             temb = nn.Dense(nf * 4, kernel_init=default_initializer())(temb)
             temb = nn.Dense(nf * 4, kernel_init=default_initializer())(act(temb))
         else:

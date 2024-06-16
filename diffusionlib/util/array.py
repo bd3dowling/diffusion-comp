@@ -7,6 +7,16 @@ import torch
 from jaxtyping import Array
 
 
+def to_flattened_numpy(x):
+    """Flatten a JAX array `x` and convert it to numpy."""
+    return np.asarray(x.reshape((-1,)))
+
+
+def from_flattened_numpy(x, shape):
+    """Form a JAX array with the given `shape` from a flattened numpy array `x`."""
+    return jnp.asarray(x).reshape(shape)
+
+
 def extract_and_expand(array, time, target):
     array = torch.from_numpy(array).to(target.device)[time].float()
     while array.ndim < target.ndim:
@@ -42,3 +52,6 @@ def expand_as(array, target):
 def to_numpy(x):
     x = x.detach().cpu().squeeze().numpy()
     return np.clip(np.transpose(x, (1, 2, 0)), a_min=0.0, a_max=1.0)
+
+
+

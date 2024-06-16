@@ -1,5 +1,4 @@
 """Posterior variance processor definitions and registries."""
-from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -10,17 +9,7 @@ from jaxtyping import Array
 
 from diffusionlib.util.array import extract_and_expand
 
-__MODEL_VAR_PROCESSOR__: dict[VarianceProcessorType, type[VarianceProcessor]] = {}
-
-
-def register_var_processor(name: VarianceProcessorType):
-    def wrapper(cls):
-        if __MODEL_VAR_PROCESSOR__.get(name):
-            raise NameError(f"Name {name} is already registerd.")
-        __MODEL_VAR_PROCESSOR__[name] = cls
-        return cls
-
-    return wrapper
+__MODEL_VAR_PROCESSOR__: dict["VarianceProcessorType", type["VarianceProcessor"]] = {}
 
 
 class VarianceProcessorType(StrEnum):
@@ -30,6 +19,16 @@ class VarianceProcessorType(StrEnum):
     LEARNED_RANGE = auto()
 
 
+def register_var_processor(name: VarianceProcessorType):
+    def wrapper(cls: type["VarianceProcessor"]):
+        if __MODEL_VAR_PROCESSOR__.get(name):
+            raise NameError(f"Name {name} is already registerd.")
+        __MODEL_VAR_PROCESSOR__[name] = cls
+        return cls
+
+    return wrapper
+
+
 @dataclass
 class VarianceProcessor(ABC):
     betas: Array
@@ -37,7 +36,7 @@ class VarianceProcessor(ABC):
     posterior_log_variance_clipped: Array
 
     @classmethod
-    def from_name(cls, name: VarianceProcessorType, **kwargs) -> VarianceProcessor:
+    def from_name(cls, name: VarianceProcessorType, **kwargs) -> "VarianceProcessor":
         if not __MODEL_VAR_PROCESSOR__.get(name):
             raise NameError(f"Name {name} is not defined.")
         return __MODEL_VAR_PROCESSOR__[name](**kwargs)

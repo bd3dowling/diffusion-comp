@@ -1,4 +1,5 @@
 """Solver classes, including Markov chains."""
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from functools import partial
@@ -10,52 +11,128 @@ from jax import grad, jacrev, lax, vjp, vmap
 from jax.lax import scan
 from jaxtyping import Array, PRNGKeyArray
 
-from diffusionlib.conditioning_method.jax import ConditioningMethodName, get_conditioning_method
-from diffusionlib.mean_processor.jax import MeanProcessor, MeanProcessorType
+from diffusionlib.conditioning_method import ConditioningMethodName, get_conditioning_method
+from diffusionlib.mean_processor import MeanProcessor, MeanProcessorType
 from diffusionlib.util.array import extract_and_expand
 from diffusionlib.util.misc import (
     batch_mul,
     batch_mul_A,
     continuous_to_discrete,
     get_linear_beta_function,
-    get_sampler,
     get_sigma_function,
     get_times,
     get_timestep,
     shared_update,
 )
-from diffusionlib.variance_processor.jax import VarianceProcessor, VarianceProcessorType
+from diffusionlib.variance_processor import VarianceProcessor, VarianceProcessorType
 
-cs_method_map = {
-    "chung2022scalar": ConditioningMethodName.DIFFUSION_POSTERIOR_SAMPLING,
-    "chung2022scalarplus": ConditioningMethodName.DIFFUSION_POSTERIOR_SAMPLING,
-    "chung2022": ConditioningMethodName.DIFFUSION_POSTERIOR_SAMPLING_MOD,
-    "chung2022plus": ConditioningMethodName.DIFFUSION_POSTERIOR_SAMPLING_MOD,
-    "song2023": ConditioningMethodName.PSEUDO_INVERSE_GUIDANCE,
-    "song2023plus": ConditioningMethodName.PSEUDO_INVERSE_GUIDANCE,
-    "diffusion2023avjp": ConditioningMethodName.VJP_GUIDANCE,
-    "diffusion2023ajacfwd": ConditioningMethodName.JAC_FWD_GUIDANCE,
-    "diffusion2023ajacrev": ConditioningMethodName.JAC_REV_GUIDANCE,
-    "diffusion2023ajacrevplus": ConditioningMethodName.JAC_REV_GUIDANCE,
-    "diffusion2023bvjpplus": ConditioningMethodName.VJP_GUIDANCE_MASK,
-    # Below vmap across calculating N_y vjps, so is O(num_samples * num_y * prod(shape)) in memory
-    "diffusion2023b": ConditioningMethodName.JAC_REV_GUIDANCE_DIAG,
-    "diffusion2023bjacfwd": ConditioningMethodName.JAC_FWD_GUIDANCE_DIAG,
-    "diffusion2023bvjp": ConditioningMethodName.VJP_GUIDANCE_DIAG,
-}
+
+def get_sampler(
+    shape, outer_solver, inner_solver=None, denoise=True, stack_samples=False, inverse_scaler=None
+):
+    """Get a sampler from (possibly interleaved) numerical solver(s).
+
+    Args:
+      shape: Shape of array, x. (num_samples,) + obj_shape, where x_shape is the shape
+        of the object being sampled from, for example, an image may have
+        obj_shape==(H, W, C), and so shape==(N, H, W, C) where N is the number of samples.
+      outer_solver: A valid numerical solver class that will act on an outer loop.
+      inner_solver: '' that will act on an inner loop.
+      denoise: Bool, that if `True` applies one-step denoising to final samples.
+      stack_samples: Bool, that if `True` return all of the sample path or
+        just returns the last sample.
+      inverse_scaler: The inverse data normalizer function.
+    Returns:
+      A sampler.
+    """
+    if inverse_scaler is None:
+        inverse_scaler = lambda x: x
+
+    def sampler(rng, x_0=None):
+        """
+        Args:
+          rng: A JAX random state.
+          x_0: Initial condition. If `None`, then samples an initial condition from the
+              sde's initial condition prior. Note that this initial condition represents
+              `x_T sim Normal(O, I)` in reverse-time diffusion.
+        Returns:
+            Samples and the number of score function (model) evaluations.
+        """
+        outer_update = partial(shared_update, solver=outer_solver)
+        outer_ts = outer_solver.ts
+
+        if inner_solver:
+            inner_update = partial(shared_update, solver=inner_solver)
+            inner_ts = inner_solver.ts
+            num_function_evaluations = jnp.size(outer_ts) * (jnp.size(inner_ts) + 1)
+
+            def inner_step(carry, t):
+                rng, x, x_mean, vec_t = carry
+                rng, step_rng = random.split(rng)
+                x, x_mean = inner_update(step_rng, x, vec_t)
+                return (rng, x, x_mean, vec_t), ()
+
+            def outer_step(carry, t):
+                rng, x, x_mean = carry
+                vec_t = jnp.full(shape[0], t)
+                rng, step_rng = random.split(rng)
+                x, x_mean = outer_update(step_rng, x, vec_t)
+                (rng, x, x_mean, vec_t), _ = scan(
+                    inner_step, (step_rng, x, x_mean, vec_t), inner_ts
+                )
+                if not stack_samples:
+                    return (rng, x, x_mean), ()
+                else:
+                    if denoise:
+                        return (rng, x, x_mean), x_mean
+                    else:
+                        return (rng, x, x_mean), x
+        else:
+            num_function_evaluations = jnp.size(outer_ts)
+
+            def outer_step(carry, t):
+                rng, x, x_mean = carry
+                vec_t = jnp.full((shape[0],), t)
+                rng, step_rng = random.split(rng)
+                x, x_mean = outer_update(step_rng, x, vec_t)
+                if not stack_samples:
+                    return (rng, x, x_mean), ()
+                else:
+                    return ((rng, x, x_mean), x_mean) if denoise else ((rng, x, x_mean), x)
+
+        rng, step_rng = random.split(rng)
+        if x_0 is None:
+            if inner_solver:
+                x = inner_solver.prior(step_rng, shape)
+            else:
+                x = outer_solver.prior(step_rng, shape)
+        else:
+            assert x_0.shape == shape
+            x = x_0
+
+        if not stack_samples:
+            (_, x, x_mean), _ = scan(outer_step, (rng, x, x), outer_ts, reverse=True)
+            return inverse_scaler(x_mean if denoise else x), num_function_evaluations
+        else:
+            (_, _, _), xs = scan(outer_step, (rng, x, x), outer_ts, reverse=True)
+            return inverse_scaler(xs), num_function_evaluations
+
+    # return jax.pmap(sampler, in_axes=(0), axis_name='batch')
+    return sampler
 
 
 def get_cs_sampler(
-    config,
+    conditioning_method: ConditioningMethodName,
+    *,
     sde,
     model,
     sampling_shape,
     inverse_scaler,
+    stack_samples,
     y,
     H,
     observation_map,
-    adjoint_observation_map,
-    stack_samples=False,
+    **kwargs,
 ):
     """Create a sampling function
 
@@ -76,154 +153,24 @@ def get_cs_sampler(
         A function that takes random states and a replicated training state and outputs samples with the
         trailing dimensions matching `shape`.
     """
-    cs_method: str = config.sampling.cs_method.lower()
+    if conditioning_method != ConditioningMethodName.NONE:
+        reverse_sde = sde.reverse(model)
+        score_func = get_conditioning_method(
+            conditioning_method,
+            sde=reverse_sde,
+            y=y,
+            observation_map=observation_map,
+            H=H,
+            HHT=H @ H.T,  # or exclude for song2023plus
+            shape=sampling_shape,
+            **kwargs,
+        ).guidance_score_func
 
-    if cs_method in ("chung2022scalar", "chung2022scalarplus"):
-        reverse_sde = sde.reverse(model)
-        scale = config.solver.num_outer_steps * config.solver.dps_scale_hyperparameter
         sampler = get_sampler(
             sampling_shape,
             EulerMaruyama(
-                reverse_sde.guide(
-                    get_conditioning_method(
-                        cs_method_map[cs_method],
-                        sde=reverse_sde,
-                        observation_map=observation_map,
-                        y=y,
-                        scale=scale,
-                    ).get_guidance_score_func()
-                )
+                reverse_sde.guide(score_func)
             ),
-            inverse_scaler=inverse_scaler,
-            stack_samples=stack_samples,
-            denoise=True,
-        )
-    elif cs_method in ("chung2022", "chung2022plus"):
-        reverse_sde = sde.reverse(model)
-        sampler = get_sampler(
-            sampling_shape,
-            EulerMaruyama(
-                reverse_sde.guide(
-                    get_conditioning_method(
-                        cs_method_map[cs_method],
-                        sde=reverse_sde,
-                        observation_map=observation_map,
-                        y=y,
-                        noise_std=config.sampling.noise_std,
-                    ).get_guidance_score_func()
-                )
-            ),
-            inverse_scaler=inverse_scaler,
-            stack_samples=stack_samples,
-            denoise=True,
-        )
-    elif cs_method == "song2023":
-        reverse_sde = sde.reverse(model)
-        sampler = get_sampler(
-            sampling_shape,
-            EulerMaruyama(
-                reverse_sde.guide(
-                    get_conditioning_method(
-                        cs_method_map[cs_method],
-                        sde=reverse_sde,
-                        observation_map=observation_map,
-                        y=y,
-                        noise_std=config.sampling.noise_std,
-                        HHT=H @ H.T,
-                    ).get_guidance_score_func()
-                )
-            ),
-            inverse_scaler=inverse_scaler,
-            stack_samples=stack_samples,
-            denoise=True,
-        )
-    elif cs_method == "song2023plus":
-        reverse_sde = sde.reverse(model)
-        sampler = get_sampler(
-            sampling_shape,
-            EulerMaruyama(
-                reverse_sde.guide(
-                    get_conditioning_method(
-                        cs_method_map[cs_method],
-                        sde=reverse_sde,
-                        observation_map=observation_map,
-                        y=y,
-                        noise_std=config.sampling.noise_std,
-                    ).get_guidance_score_func()
-                )
-            ),
-            inverse_scaler=inverse_scaler,
-            stack_samples=stack_samples,
-            denoise=True,
-        )
-    elif cs_method in ("diffusion2023avjp", "diffusion2023bvjp"):
-        reverse_sde = sde.reverse(model)
-        sampler = get_sampler(
-            sampling_shape,
-            EulerMaruyama(
-                reverse_sde.guide(
-                    get_conditioning_method(
-                        cs_method_map[cs_method],
-                        sde=reverse_sde,
-                        H=H,
-                        y=y,
-                        noise_std=config.sampling.noise_std,
-                        shape=sampling_shape,
-                    ).get_guidance_score_func()
-                )
-            ),
-            inverse_scaler=inverse_scaler,
-            stack_samples=stack_samples,
-            denoise=True,
-        )
-    elif cs_method.startswith("diffusion"):
-        reverse_sde = sde.reverse(model)
-        sampler = get_sampler(
-            sampling_shape,
-            EulerMaruyama(
-                reverse_sde.guide(
-                    get_conditioning_method(
-                        cs_method_map[cs_method],
-                        sde=reverse_sde,
-                        observation_map=observation_map,
-                        y=y,
-                        noise_std=config.sampling.noise_std,
-                        shape=sampling_shape,
-                    ).get_guidance_score_func()
-                )
-            ),
-            inverse_scaler=inverse_scaler,
-            stack_samples=stack_samples,
-            denoise=True,
-        )
-    elif cs_method == "stsl":
-        # Reproduce Second Order Tweedie sampler from Surrogate Loss (STSL) from (Rout et al. 2023)
-        # What contrastive loss do they use?
-        ts, _ = get_times(
-            num_steps=config.solver.num_outer_steps, dt=config.solver.dt, t0=config.solver.epsilon
-        )
-        beta, _ = get_linear_beta_function(
-            beta_min=config.model.beta_min, beta_max=config.model.beta_max
-        )
-        forward_solver = EulerMaruyama(sde)
-        outer_solver = STSL(
-            config.solver.stsl_scale_hyperparameter,
-            config.solver.dps_scale_hyperparameter,
-            y,
-            observation_map,
-            adjoint_observation_map,
-            config.sampling.noise_std,
-            sampling_shape[1:],
-            model,
-            config.solver.eta,
-            beta,
-            ts,
-        )
-        # needs a special prior initialization that depends on the observed data, so uses different sampler
-        sampler = get_stsl_sampler(
-            sampling_shape,
-            forward_solver,
-            outer_solver,
             inverse_scaler=inverse_scaler,
             stack_samples=stack_samples,
             denoise=True,
@@ -266,11 +213,12 @@ def get_cs_sampler(
             config.solver.dps_scale_hyperparameter, y, observation_map, score, beta, ts
         )
         sampler = get_sampler(
-            sampling_shape,
-            outer_solver,
-            inverse_scaler=inverse_scaler,
-            stack_samples=stack_samples,
+            shape=sampling_shape,
+            outer_solver=outer_solver,
+            inner_solver=None,
             denoise=True,
+            stack_samples=stack_samples,
+            inverse_scaler=inverse_scaler,
         )
     elif cs_method == "dpsddpmplus":
         score = model
@@ -664,100 +612,9 @@ def get_cs_sampler(
             stack_samples=stack_samples,
             denoise=True,
         )
-    elif cs_method == "wc4dvar":
-        # Get prior samples via a method
-        raise NotImplementedError("TODO")
     else:
-        raise ValueError(f"{config.sampling.cs_method=} not recognized")
+        raise ValueError(f"{conditioning_method=} not recognized")
 
-    return sampler
-
-
-def get_stsl_sampler(
-    shape, forward_solver, inner_solver, denoise=True, stack_samples=False, inverse_scaler=None
-):
-    """Get a sampler from (possibly interleaved) numerical solver(s).
-
-    Args:
-      shape: Shape of array, x. (num_samples,) + obj_shape, where x_shape is the shape
-        of the object being sampled from, for example, an image may have
-        obj_shape==(H, W, C), and so shape==(N, H, W, C) where N is the number of samples.
-      inner_solver: A valid numerical solver class that will act on an inner loop.
-      denoise: Bool, that if `True` applies one-step denoising to final samples.
-      stack_samples: Bool, that if `True` return all of the sample path or
-        just returns the last sample.
-      inverse_scaler: The inverse data normalizer function.
-    Returns:
-      A sampler.
-    """
-    if inverse_scaler is None:
-        inverse_scaler = lambda x: x
-
-    def sampler(rng, x_0=None):
-        """
-        Args:
-          rng: A JAX random state.
-          x_0: Initial condition. If `None`, then samples an initial condition from the
-              sde's initial condition prior. Note that this initial condition represents
-              `x_T sim Normal(O, I)` in reverse-time diffusion.
-        Returns:
-            Samples and the number of score function (model) evaluations.
-        """
-        forward_update = partial(shared_update, solver=forward_solver)
-        outer_ts = inner_solver.ts
-
-        def forward_step(carry, t):
-            rng, x, x_mean = carry
-            vec_t = jnp.full((shape[0],), t)
-            rng, step_rng = random.split(rng)
-            x, x_mean = forward_update(step_rng, x, vec_t)
-            return (rng, x, x_mean), ()
-
-        inner_update = partial(shared_update, solver=inner_solver)
-        inner_ts = jnp.ones((3, 1))
-        num_function_evaluations = jnp.size(outer_ts) * (3 * jnp.size(inner_ts))
-
-        def inner_step(carry, t):
-            rng, x, x_mean, vec_t = carry
-            rng, step_rng = random.split(rng)
-            x, x_mean = inner_update(step_rng, x, vec_t)
-            return (rng, x, x_mean, vec_t), ()
-
-        def outer_step(carry, t):
-            rng, x, x_mean = carry
-            vec_t = jnp.full(shape[0], t)
-            rng, step_rng = random.split(rng)
-            # Use x_mean as input for first inner step
-            (rng, x, x_mean, vec_t), _ = scan(
-                inner_step, (step_rng, x_mean, x_mean, vec_t), inner_ts
-            )
-            if not stack_samples:
-                return (rng, x, x_mean), ()
-            else:
-                if denoise:
-                    return (rng, x, x_mean), x_mean
-                else:
-                    return (rng, x, x_mean), x
-
-        rng, step_rng = random.split(rng)
-        if x_0 is None:
-            x = inner_solver.prior(step_rng, shape)
-        else:
-            assert x_0.shape == shape
-            x = x_0
-
-        # get initial sample
-        x = inner_solver.batch_adjoint_observation_map(inner_solver.y)
-        (_, x, x_mean), _ = scan(forward_step, (rng, x, x), outer_ts, reverse=False)
-
-        if not stack_samples:
-            (_, x, x_mean), _ = scan(outer_step, (rng, x, x), outer_ts, reverse=True)
-            return inverse_scaler(x_mean if denoise else x), num_function_evaluations
-        else:
-            (_, _, _), xs = scan(outer_step, (rng, x, x), outer_ts, reverse=True)
-            return inverse_scaler(xs), num_function_evaluations
-
-    # return jax.pmap(sampler, in_axes=(0), axis_name='batch')
     return sampler
 
 
@@ -862,11 +719,14 @@ class EulerMaruyama(Solver):
 
     def update(self, rng, x, t):
         drift, diffusion = self.sde.sde(x, t)
+
+        noise = random.normal(rng, x.shape)
         f = drift * self.dt
         G = diffusion * jnp.sqrt(self.dt)
-        noise = random.normal(rng, x.shape)
+
         x_mean = x + f
         x = x_mean + batch_mul(G, noise)
+
         return x, x_mean
 
 
@@ -892,13 +752,16 @@ class Annealed(Solver):
         self.prior = sde.prior
 
     def update(self, rng, x, t):
+        alpha = jnp.exp(2 * self.sde.log_mean_coeff(t))
+
         grad = self.sde.score(x, t)
         grad_norm = jnp.linalg.norm(grad.reshape((grad.shape[0], -1)), axis=-1).mean()
         grad_norm = jax.lax.pmean(grad_norm, axis_name="batch")
+
         noise = random.normal(rng, x.shape)
         noise_norm = jnp.linalg.norm(noise.reshape((noise.shape[0], -1)), axis=-1).mean()
         noise_norm = jax.lax.pmean(noise_norm, axis_name="batch")
-        alpha = jnp.exp(2 * self.sde.log_mean_coeff(t))
+
         dt = (self.snr * noise_norm / grad_norm) ** 2 * 2 * alpha
         x_mean = x + batch_mul(grad, dt)
         x = x_mean + batch_mul(2 * dt, noise)
@@ -1103,7 +966,7 @@ class DDPM_:
     @classmethod
     def from_beta_range(
         cls, n: int, beta_min: float = 0.1, beta_max: float = 20.0, **kwargs
-    ) -> DDPM:
+    ) -> "DDPM_":
         betas = jnp.array(
             [beta_min / n + i / (n * (n - 1)) * (beta_max - beta_min) for i in range(n)]
         )
@@ -1422,78 +1285,6 @@ class DDIMVE(Solver):
         z = random.normal(rng, x.shape)
         x = x_mean + batch_mul(std, z)
         return x, x_mean
-
-
-# FROM diffusionjax
-
-
-class STSL(DDIMVP):
-    def __init__(
-        self,
-        scale,
-        likelihood_strength,
-        y,
-        observation_map,
-        adjoint_observation_map,
-        noise_std,
-        shape,
-        model,
-        eta=1.0,
-        beta=None,
-        ts=None,
-    ):
-        super().__init__(model, eta, beta, ts)
-        self.estimate_h_x_0_vmap = self.get_estimate_x_0_vmap(observation_map)
-        self.y = y
-        self.noise_std = noise_std
-        # NOTE: Special case when num_y==1 can be handled correctly by defining observation_map output shape (1,)
-        self.num_y = y.shape[1]
-        self.num_x = sum([d for d in shape])
-        self.observation_map = observation_map
-        self.likelihood_score_vmap = self.get_likelihood_score_vmap()
-        self.adjoint_observation_map = adjoint_observation_map
-        self.batch_adjoint_observation_map = vmap(adjoint_observation_map)
-        self.likelihood_strength = likelihood_strength
-        self.scale = scale
-
-    def get_likelihood_score_vmap(self):
-        def l2_norm(x, t, timestep, y, rng):
-            m = self.sqrt_alphas_cumprod[timestep]
-            sqrt_1m_alpha = self.sqrt_1m_alphas_cumprod[timestep]
-            x = jnp.expand_dims(x, axis=0)
-            t = jnp.expand_dims(t, axis=0)
-            epsilon = self.model(x, t).squeeze(axis=0)
-            x_0 = (x.squeeze(axis=0) - sqrt_1m_alpha * epsilon) / m
-            score = -epsilon / sqrt_1m_alpha
-            z = random.normal(rng, x.shape)
-            score_perturbed = -self.model(x + z, t).squeeze(axis=0) / sqrt_1m_alpha
-            h_x_0 = self.observation_map(x_0)
-            norm = jnp.linalg.norm(y - h_x_0)
-            scalar = -self.likelihood_strength * norm - (self.scale / self.num_x) * (
-                jnp.dot(z, score_perturbed) - jnp.dot(z, score)
-            )
-            return scalar[0], (score, x_0)
-
-        grad_l2_norm = grad(l2_norm, has_aux=True)
-        return vmap(grad_l2_norm, in_axes=(0, 0, 0, 0, None))
-
-    def update(self, rng, x, t):
-        timestep = get_timestep(t, self.t0, self.t1, self.num_steps)
-        beta = self.discrete_betas[timestep]
-        sqrt_1m_alpha = self.sqrt_1m_alphas_cumprod[timestep]
-        v = sqrt_1m_alpha**2
-        alpha = self.alphas[timestep]
-        m_prev = self.sqrt_alphas_cumprod_prev[timestep]
-        v_prev = self.sqrt_1m_alphas_cumprod_prev[timestep] ** 2
-        ls, (s, x_0) = self.likelihood_score_vmap(x, t, timestep, self.y, rng)
-        x = x + ls
-        x_mean = batch_mul(jnp.sqrt(alpha) * v_prev / v, x) + batch_mul(m_prev * beta / v, x_0)
-        std = jnp.sqrt(beta * v_prev / v)
-        rng, step_rng = random.split(rng)
-        z = random.normal(step_rng, x.shape)
-        x_mean = x_mean + batch_mul(std, z)
-        return x, x_mean
-
 
 class MPGD(DDIMVP):
     """
@@ -2121,24 +1912,6 @@ class KPSMLDplus(KPSMLD):
 
 class KPSMLDdiag(KPSMLD):
     """Kalman posterior for SMLD Ancestral sampling."""
-
-    # def get_grad_estimate_x_0_vmap(self, observation_map):
-    #   """https://stackoverflow.com/questions/70956578/jacobian-diagonal-computation-in-jax"""
-
-    #   def estimate_x_0_single(val, i, x, t, timestep):
-    #     x_shape = x.shape
-    #     x = x.flatten()
-    #     x = x.at[i].set(val)
-    #     x = x.reshape(x_shape)
-    #     x = jnp.expand_dims(x, axis=0)
-    #     t = jnp.expand_dims(t, axis=0)
-    #     v = self.discrete_sigmas[timestep]**2
-    #     s = self.score(x, t)
-    #     x_0 = x + v * s
-    #     h_x_0 = observation_map(x_0)
-    #     return h_x_0[i]
-    #   return vmap(value_and_grad(estimate_x_0_single), in_axes=(0, 0, None, None, None))
-
     def analysis(self, y, x, t, timestep, ratio):
         h_x_0, vjp_h_x_0, (_, x_0) = vjp(
             lambda x: self.estimate_h_x_0_vmap(x, t, timestep), x, has_aux=True
@@ -2149,19 +1922,6 @@ class KPSMLDdiag(KPSMLD):
         # This seems like the best method, but it is too slow for numerical evaluation, and batch size cannot be large (max size tested was one)
         vec_vjp_h_x_0 = vmap(vjp_h_x_0)
         diag = jnp.diag(self.batch_observation_map(vec_vjp_h_x_0(jnp.eye(y.shape[0]))[0]))
-
-        # # This method gives OOM error
-        # idx = jnp.arange(len(y))
-        # h_x_0, diag = self.grad_estimate_x_0_vmap(x.flatten(), idx, x, t, timestep)
-        # diag = self.observation_map(diag)
-
-        # # This method can't be XLA compiled and is way too slow for numerical evaluation
-        # diag = jnp.empty(y.shape[0])
-        # for i in range(y.shape[0]):
-        #   eye = jnp.zeros(y.shape[0])
-        #   diag_i = jnp.dot(self.observation_map(vjp_h_x_0(eye)[0]), eye)
-        #   diag = diag.at[i].set(diag_i)
-
         C_yy = diag + self.noise_std**2 / ratio
         ls = vjp_h_x_0((y - h_x_0) / C_yy)[0]
         return x_0.squeeze(axis=0) + ls

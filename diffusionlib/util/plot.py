@@ -1,4 +1,5 @@
 """Plotting code for the examples."""
+
 from functools import partial
 from typing import Any
 
@@ -25,33 +26,7 @@ dpi_val = 1200
 cmap = "magma"
 
 
-def plot_heatmap(samples, area_bounds, lengthscale=350.0, fname="plot_heatmap") -> None:
-    """Plots a heatmap of all samples in the area area_bounds x area_bounds.
-    Args:
-      samples: locations of particles shape (num_particles, 2)
-    """
-
-    def small_kernel(z, area_bounds):
-        a = jnp.linspace(area_bounds[0], area_bounds[1], 512)
-        x, y = jnp.meshgrid(a, a)
-        dist = (x - z[0]) ** 2 + (y - z[1]) ** 2
-        hm = jnp.exp(-lengthscale * dist)
-        return hm
-
-    @jit  # jit most of the code, but use the helper functions since cannot jit all of it because of plt
-    def produce_heatmap(samples, area_bounds):
-        return jnp.sum(vmap(small_kernel, in_axes=(0, None))(samples, area_bounds), axis=0)
-
-    hm = produce_heatmap(samples, area_bounds)
-    extent = area_bounds + area_bounds
-    plt.imshow(hm, interpolation="nearest", extent=extent)
-    ax = plt.gca()
-    ax.invert_yaxis()
-    plt.savefig(fname + ".png")
-    plt.close()
-
-
-def _plot_heatmap(samples, area_bounds, lengthscale=350.0):
+def plot_heatmap(samples, area_bounds, lengthscale=350.0):
     """Plots a heatmap of all samples in the area area_bounds x area_bounds.
     Args:
       samples: locations of particles shape (num_particles, 2)
@@ -77,7 +52,33 @@ def _plot_heatmap(samples, area_bounds, lengthscale=350.0):
     ax.set_ylabel(r"$x_1$")
 
     plt.close()
+    return fig
 
+
+def plot_single_image(indices, samples, color=color_algorithm):
+    fig, ax = plt.subplots(figsize=(6, 6))
+    ax.scatter(*samples[:, indices].T, alpha=0.5, color=color, edgecolors="black")
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_xlim([-22, 22])
+    ax.set_ylim([-22, 22])
+
+    plt.close()
+    return fig
+
+
+def plot_image(indices, diffusion_samples, target_samples):
+    fig, ax = plt.subplots(figsize=(6, 6))
+    ax.scatter(*target_samples[:, indices].T, alpha=0.5, color=color_posterior, edgecolors="black")
+    ax.scatter(
+        *diffusion_samples[:, indices].T, alpha=0.5, color=color_algorithm, edgecolors="black"
+    )
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_xlim([-22, 22])
+    ax.set_ylim([-22, 22])
+
+    plt.close()
     return fig
 
 
@@ -173,83 +174,6 @@ def plot_temperature_schedule(sde, solver):
     plt.legend()
     plt.savefig("plot_temperature_schedule.png")
     plt.close()
-
-
-def plot_single_image(
-    noise_std, dim, dim_y, timesteps, i, name, indices, samples, color=color_algorithm
-):
-    fig, ax = plt.subplots(1, 1, figsize=(4, 4))
-    ax.scatter(*samples[:, indices].T, alpha=0.5, color=color, edgecolors="black", rasterized=True)
-    ax.set_xticks([])
-    ax.set_yticks([])
-    ax.set_xlim([-22, 22])
-    ax.set_ylim([-22, 22])
-    fig.subplots_adjust(left=0.005, right=0.995, bottom=0.005, top=0.995)
-
-    plt.savefig(
-        f"inverse_problem_comparison_out_dist_{noise_std}_{dim}_{dim_y}_{timesteps}_{i}_{name}.png",
-        transparent=True,
-        dpi=dpi_val,
-    )
-    plt.close(fig)
-
-
-def plot_image(
-    noise_std, dim, dim_y, timesteps, i, name, indices, diffusion_samples, target_samples=None
-):
-    fig, ax = plt.subplots(1, 1, figsize=(4, 4))
-    ax.scatter(
-        *target_samples[:, indices].T,
-        alpha=0.5,
-        color=color_posterior,
-        edgecolors="black",
-        rasterized=True,
-    )
-    ax.scatter(
-        *diffusion_samples[:, indices].T,
-        alpha=0.5,
-        color=color_algorithm,
-        edgecolors="black",
-        rasterized=True,
-    )
-    ax.set_xticks([])
-    ax.set_yticks([])
-    ax.set_xlim([-22, 22])
-    ax.set_ylim([-22, 22])
-    fig.subplots_adjust(left=0.005, right=0.995, bottom=0.005, top=0.995)
-    plt.savefig(
-        f"inverse_problem_comparison_out_dist_{noise_std}_{dim}_{dim_y}_{timesteps}_{i}_{name}.png",
-        transparent=True,
-        dpi=dpi_val,
-    )
-    plt.close(fig)
-
-
-def sliced_wasserstein(rng, dist_1, dist_2, n_slices=100):
-    projections = random.normal(rng, (n_slices, dist_1.shape[1]))
-    projections = projections / jnp.linalg.norm(projections, axis=-1)[:, None]
-    dist_1_projected = projections @ dist_1.T
-    dist_2_projected = projections @ dist_2.T
-    return np.mean(
-        [
-            wasserstein_distance(u_values=d1, v_values=d2)
-            for d1, d2 in zip(dist_1_projected, dist_2_projected)
-        ]
-    )
-
-
-def Wasserstein2(m1, C1, m2, C2):
-    C1_half = scipy.linalg.sqrtm(C1)
-    C_half = jnp.asarray(
-        np.asarray(np.real(scipy.linalg.sqrtm(C1_half @ C2 @ C1_half)), dtype=float)
-    )
-    return jnp.linalg.norm(m1 - m2) ** 2 + jnp.trace(C1) + jnp.trace(C2) - 2 * jnp.trace(C_half)
-
-
-def Distance2(m1, C1, m2, C2):
-    C2_half = jnp.linalg.cholesky(C2)
-    C1_half = jnp.linalg.cholesky(C1)
-    return jnp.linalg.norm(m1 - m2) ** 2 + jnp.linalg.norm(C1_half - C2_half) ** 2
 
 
 def plot(train_data, test_data, mean, variance, fname="plot.png"):

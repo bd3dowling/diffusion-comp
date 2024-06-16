@@ -1,10 +1,12 @@
 """Abstract SDE classes, Reverse SDE, and VE/VP SDEs."""
+
 import abc
 
 import jax
 import jax.numpy as jnp
 import numpy as np
-from utils import batch_mul
+
+from diffusionlib.util.misc import batch_mul
 
 
 class SDE(abc.ABC):
@@ -23,21 +25,21 @@ class SDE(abc.ABC):
     @abc.abstractmethod
     def T(self):
         """End time of the SDE."""
-        pass
+        raise NotImplementedError
 
     @abc.abstractmethod
     def sde(self, x, t):
-        pass
+        raise NotImplementedError
 
     @abc.abstractmethod
     def marginal_prob(self, x, t):
         """Parameters to determine the marginal distribution of the SDE, $p_t(x)$."""
-        pass
+        raise NotImplementedError
 
     @abc.abstractmethod
     def prior_sampling(self, rng, shape):
         """Generate one sample from the prior distribution, $p_T(x)$."""
-        pass
+        raise NotImplementedError
 
     @abc.abstractmethod
     def prior_logp(self, z):
@@ -50,7 +52,7 @@ class SDE(abc.ABC):
         Returns:
           log probability density
         """
-        pass
+        raise NotImplementedError
 
     def discretize(self, x, t):
         """Discretize the SDE in the form: x_{i+1} = x_i + f_i(x_i) + G_i z_i.

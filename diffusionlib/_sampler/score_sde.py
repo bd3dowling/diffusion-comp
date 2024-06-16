@@ -6,11 +6,15 @@ import flax
 import jax
 import jax.numpy as jnp
 import jax.random as random
-import sde_lib
-from models import utils as mutils
-from models.utils import from_flattened_numpy, get_score_fn, to_flattened_numpy
 from scipy import integrate
-from utils import batch_mul
+
+import diffusionlib._sde.score_sde as sde_lib
+from diffusionlib.model.registry import get_score_fn
+from diffusionlib.util.array import (
+    from_flattened_numpy,
+    to_flattened_numpy,
+)
+from diffusionlib.util.misc import batch_mul
 
 _CORRECTORS = {}
 _PREDICTORS = {}
@@ -91,8 +95,8 @@ def get_sampling_fn(config, sde, model, shape, inverse_scaler, eps):
         )
     # Predictor-Corrector sampling. Predictor-only and Corrector-only samplers are special cases.
     elif sampler_name.lower() == "pc":
-        predictor = get_predictor(config.sampling.predictor.lower())
-        corrector = get_corrector(config.sampling.corrector.lower())
+        predictor = get_predictor(config.sampling.predictor)
+        corrector = get_corrector(config.sampling.corrector)
         sampling_fn = get_pc_sampler(
             sde=sde,
             model=model,
@@ -268,16 +272,20 @@ class LangevinCorrector(Corrector):
 
         def loop_body(step, val):
             rng, x, x_mean = val
-            grad = score_fn(x, t)
             rng, step_rng = jax.random.split(rng)
-            noise = jax.random.normal(step_rng, x.shape)
+
+            grad = score_fn(x, t)
             grad_norm = jnp.linalg.norm(grad.reshape((grad.shape[0], -1)), axis=-1).mean()
             grad_norm = jax.lax.pmean(grad_norm, axis_name="batch")
+
+            noise = jax.random.normal(step_rng, x.shape)
             noise_norm = jnp.linalg.norm(noise.reshape((noise.shape[0], -1)), axis=-1).mean()
             noise_norm = jax.lax.pmean(noise_norm, axis_name="batch")
+
             step_size = (target_snr * noise_norm / grad_norm) ** 2 * 2 * alpha
             x_mean = x + batch_mul(step_size, grad)
             x = x_mean + batch_mul(noise, jnp.sqrt(step_size * 2))
+
             return rng, x, x_mean
 
         _, x, x_mean = jax.lax.fori_loop(0, n_steps, loop_body, (rng, x, x))
@@ -342,7 +350,7 @@ def shared_predictor_update_fn(
     rng, state, x, t, sde, model, predictor, probability_flow, continuous
 ):
     """A wrapper that configures and returns the update function of predictors."""
-    score_fn = mutils.get_score_fn(
+    score_fn = get_score_fn(
         sde, model, state.params_ema, state.model_state, train=False, continuous=continuous
     )
     if predictor is None:
@@ -355,7 +363,7 @@ def shared_predictor_update_fn(
 
 def shared_corrector_update_fn(rng, state, x, t, sde, model, corrector, continuous, snr, n_steps):
     """A wrapper tha configures and returns the update function of correctors."""
-    score_fn = mutils.get_score_fn(
+    score_fn = get_score_fn(
         sde, model, state.params_ema, state.model_state, train=False, continuous=continuous
     )
     if corrector is None:

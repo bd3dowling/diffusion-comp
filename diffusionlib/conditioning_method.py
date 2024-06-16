@@ -1,9 +1,15 @@
 """Utility functions related to Bayesian inversion."""
-from enum import Enum
+
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, field, fields, is_dataclass
+from enum import StrEnum, auto
+from typing import Callable
 
 import jax.numpy as jnp
 from jax import grad, jacfwd, jacrev, vjp, vmap
+from jaxtyping import Array
 
+from diffusionlib.sde import RVE, RVP
 from diffusionlib.util.misc import (
     batch_linalg_solve,
     batch_linalg_solve_A,
@@ -13,26 +19,27 @@ from diffusionlib.util.misc import (
     batch_mul_A,
 )
 
-__CONDITIONING_METHOD__ = {}
+__CONDITIONING_METHOD__: dict["ConditioningMethodName", type["ConditioningMethod"]] = {}
 
 
-class ConditioningMethodName(str, Enum):
-    DIFFUSION_POSTERIOR_SAMPLING = "diffusion_posterior_sampling"
-    DIFFUSION_POSTERIOR_SAMPLING_MOD = "diffusion_psoterior_sampling_mod"
-    PSEUDO_INVERSE_GUIDANCE = "pseduo_inverse_guidance"
-    VJP_GUIDANCE = "vjp_guidance"
-    VJP_GUIDANCE_ALT = "vjp_guidance_alt"
-    VJP_GUIDANCE_MASK = "vjp_guidance_mask"
-    VJP_GUIDANCE_DIAG = "vjp_guidance_diag"
-    JAC_REV_GUIDANCE = "jac_rev_guidance"
-    JAC_REV_GUIDANCE_DIAG = "jac_rev_guidance_diag"
-    JAC_FWD_GUIDANCE = "jac_fwd_guidance"
-    JAC_FWD_GUIDANCE_DIAG = "jac_fwd_guidance_diag"
+class ConditioningMethodName(StrEnum):
+    NONE = auto()
+    DIFFUSION_POSTERIOR_SAMPLING = auto()
+    DIFFUSION_POSTERIOR_SAMPLING_MOD = auto()
+    PSEUDO_INVERSE_GUIDANCE = auto()
+    VJP_GUIDANCE = auto()
+    VJP_GUIDANCE_ALT = auto()
+    VJP_GUIDANCE_MASK = auto()
+    VJP_GUIDANCE_DIAG = auto()
+    JAC_REV_GUIDANCE = auto()
+    JAC_REV_GUIDANCE_DIAG = auto()
+    JAC_FWD_GUIDANCE = auto()
+    JAC_FWD_GUIDANCE_DIAG = auto()
 
 
 def register_conditioning_method(name: ConditioningMethodName):
     def wrapper(cls):
-        if __CONDITIONING_METHOD__.get(name, None):
+        if __CONDITIONING_METHOD__.get(name):
             raise NameError(f"Name {name} is already registered!")
         __CONDITIONING_METHOD__[name] = cls
         return cls
@@ -40,14 +47,35 @@ def register_conditioning_method(name: ConditioningMethodName):
     return wrapper
 
 
-def get_conditioning_method(name: ConditioningMethodName, *args, **kwargs):
-    if __CONDITIONING_METHOD__.get(name, None) is None:
+def get_conditioning_method(name: ConditioningMethodName, **kwargs):
+    if (cond_method_class := __CONDITIONING_METHOD__.get(name)) is None:
         raise NameError(f"Name {name} is not defined!")
-    return __CONDITIONING_METHOD__[name](*args, **kwargs)
+
+    class_fields = {field.name for field in fields(cond_method_class)}
+    params = {field: value for field, value in kwargs.items() if field in class_fields}
+
+    return cond_method_class(**params)
+
+
+@dataclass
+class ConditioningMethod(ABC):
+    sde: RVE | RVP
+    y: Array
+
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        if not is_dataclass(cls):
+            raise TypeError(f"Class {cls.__name__} must be a dataclass")
+
+    @property
+    @abstractmethod
+    def guidance_score_func(self) -> Callable[[Array, Array], Array]:
+        raise NotImplementedError
 
 
 @register_conditioning_method(ConditioningMethodName.DIFFUSION_POSTERIOR_SAMPLING)
-class DPS:
+@dataclass
+class DPS(ConditioningMethod):
     """
     Implementation of score guidance suggested in
     `Diffusion Posterior Sampling for general noisy inverse problems'
@@ -64,13 +92,11 @@ class DPS:
             See https://arxiv.org/pdf/2209.14687.pdf#page=20&zoom=100,144,757
     """
 
-    def __init__(self, sde, observation_map, y, scale=0.4):
-        self.sde = sde
-        self.observation_map = observation_map
-        self.y = y
-        self.scale = scale
+    observation_map: Callable[[Array], Array]
+    scale: float
 
-    def get_guidance_score_func(self):
+    @property
+    def guidance_score_func(self) -> Callable[[Array, Array], Array]:
         def get_l2_norm(y, estimate_h_x_0):
             def l2_norm(x, t):
                 h_x_0, (s, _) = estimate_h_x_0(x, t)
@@ -92,7 +118,8 @@ class DPS:
 
 
 @register_conditioning_method(ConditioningMethodName.DIFFUSION_POSTERIOR_SAMPLING_MOD)
-class DPSMod:
+@dataclass
+class DPSMod(ConditioningMethod):
     """
     Implementation of score guidance suggested in
     `Diffusion Posterior Sampling for general noisy inverse problems'
@@ -108,13 +135,11 @@ class DPSMod:
     to directly calculate the score.
     """
 
-    def __init__(self, sde, observation_map, y, noise_std):
-        self.sde = sde
-        self.observation_map = observation_map
-        self.y = y
-        self.noise_std = noise_std
+    observation_map: Callable[[Array], Array]
+    noise_std: float
 
-    def get_guidance_score_func(self):
+    @property
+    def guidance_score_func(self) -> Callable[[Array, Array], Array]:
         estimate_h_x_0 = self.sde.get_estimate_x_0(self.observation_map)
 
         def guidance_score(x, t):
@@ -132,47 +157,55 @@ class DPSMod:
 
 
 @register_conditioning_method(ConditioningMethodName.PSEUDO_INVERSE_GUIDANCE)
-class PIG:
+@dataclass
+class PIG(ConditioningMethod):
     """
     `Pseudo-Inverse guided diffusion models for inverse problems`
     https://openreview.net/pdf?id=9_gsMA8MRKQ
     Song et al. 2023,
     guidance score for an observation_map that can be
-    represented by either `def observation_map(x: Float[Array, dims]) -> y: Float[Array, d_x = dims.flatten()]: return mask * x  # (d_x,)`
-        or `def observation_map(x: Float[Array, dims]) -> y: Float[Array, d_y]: return H @ x   # (d_y,)`
+    represented by either
+    `(x: Float[Array, dims]) -> y: Float[Array, d_x = dims.flatten()]: return mask * x  # (d_x,)`
+    or
+    `(x: Float[Array, dims]) -> y: Float[Array, d_y]: return H @ x   # (d_y,)`
     Computes one vjps.
     """
+    observation_map: Callable[[Array], Array]
+    noise_std: float
+    HHT: Array = field(default_factory=lambda: jnp.array([1.0]))
 
-    def __init__(self, sde, observation_map, y, noise_std, HHT=jnp.array([1.0])):
-        self.sde = sde
-        self.observation_map = observation_map
-        self.y = y
-        self.noise_std = noise_std
-        self.HHT = HHT
-
-    def get_guidance_score_func(self):
+    @property
+    def guidance_score_func(self) -> Callable[[Array, Array], Array]:
         estimate_h_x_0 = self.sde.get_estimate_x_0(self.observation_map)
 
         def guidance_score(x, t):
             h_x_0, vjp_estimate_h_x_0, (s, _) = vjp(lambda x: estimate_h_x_0(x, t), x, has_aux=True)
             innovation = self.y - h_x_0
+
             if self.HHT.shape == (self.y.shape[1], self.y.shape[1]):
                 C_yy = self.sde.r2(
-                    t[0], data_variance=1.0
+                    t[0], data_variance=jnp.array(1.0)
                 ) * self.HHT + self.noise_std**2 * jnp.eye(self.y.shape[1])
                 f = batch_linalg_solve_A(C_yy, innovation)
             elif self.HHT.shape == (1,):
-                C_yy = self.sde.r2(t[0], data_variance=1.0) * self.HHT + self.noise_std**2
+                C_yy = (
+                    self.sde.r2(t[0], data_variance=jnp.array(1.0)) * self.HHT + self.noise_std**2
+                )
                 f = innovation / C_yy
+            else:
+                raise ValueError(f"Bad shape for {self.HHT.shape=}")
+
             ls = vjp_estimate_h_x_0(f)[0]
             gs = s + ls
+
             return gs
 
         return guidance_score
 
 
 @register_conditioning_method(ConditioningMethodName.VJP_GUIDANCE_ALT)
-class VJPAlt:
+@dataclass
+class VJPAlt(ConditioningMethod):
     """
     Uses full second moment approximation of the covariance of x_0|x_t.
 
@@ -181,14 +214,12 @@ class VJPAlt:
     NOTE: Alternate implementation to `meth:get_vjp_guidance` that does all reshaping here.
     """
 
-    def __init__(self, sde, H, y, noise_std, shape):
-        self.sde = sde
-        self.H = H
-        self.y = y
-        self.noise_std = noise_std
-        self.shape = shape
+    H: Array
+    noise_std: float
+    shape: tuple[int, ...]
 
-    def get_guidance_score_func(self):
+    @property
+    def guidance_score_func(self) -> Callable[[Array, Array], Array]:
         estimate_x_0 = self.sde.get_estimate_x_0(lambda x: x)
         _shape = (self.H.shape[0],) + self.shape[1:]
         axes = (1, 0) + tuple(range(len(self.shape) + 1)[2:])
@@ -214,21 +245,20 @@ class VJPAlt:
 
 
 @register_conditioning_method(ConditioningMethodName.VJP_GUIDANCE)
-class VJP:
+@dataclass
+class VJP(ConditioningMethod):
     """
     Uses full second moment approximation of the covariance of x_0|x_t.
 
     Computes using H.shape[0] vjps.
     """
 
-    def __init__(self, sde, H, y, noise_std, shape):
-        self.sde = sde
-        self.H = H
-        self.y = y
-        self.noise_std = noise_std
-        self.shape = shape
+    H: Array
+    noise_std: float
+    shape: tuple[int, ...]
 
-    def get_guidance_score_func(self):
+    @property
+    def guidance_score_func(self) -> Callable[[Array, Array], Array]:
         # TODO: necessary to use shape here?
         estimate_x_0 = self.sde.get_estimate_x_0(lambda x: x, shape=(self.shape[0], -1))
         batch_H = jnp.transpose(jnp.tile(self.H, (self.shape[0], 1, 1)), axes=(1, 0, 2))
@@ -253,21 +283,20 @@ class VJP:
 
 
 @register_conditioning_method(ConditioningMethodName.VJP_GUIDANCE_MASK)
-class VJPMask:
+@dataclass
+class VJPMask(ConditioningMethod):
     """
     Uses row sum of second moment approximation of the covariance of x_0|x_t.
 
     Computes two vjps.
     """
 
-    def __init__(self, sde, observation_map, y, noise_std, shape):
-        self.sde = sde
-        self.observation_map = observation_map
-        self.y = y
-        self.noise_std = noise_std
-        self.shape = shape
+    observation_map: Callable[[Array], Array]
+    noise_std: float
+    shape: tuple[int, ...]
 
-    def get_guidance_score_func(self):
+    @property
+    def guidance_score_func(self) -> Callable[[Array, Array], Array]:
         estimate_h_x_0 = self.sde.get_estimate_x_0(self.observation_map)
         batch_observation_map = vmap(self.observation_map)
 
@@ -285,21 +314,20 @@ class VJPMask:
 
 
 @register_conditioning_method(ConditioningMethodName.JAC_REV_GUIDANCE)
-class JacRev:
+@dataclass
+class JacRev(ConditioningMethod):
     """
     Uses full second moment approximation of the covariance of x_0|x_t.
 
     Computes using d_y vjps.
     """
 
-    def __init__(self, sde, observation_map, y, noise_std, shape):
-        self.sde = sde
-        self.observation_map = observation_map
-        self.y = y
-        self.noise_std = noise_std
-        self.shape = shape
+    observation_map: Callable[[Array], Array]
+    noise_std: float
+    shape: tuple[int, ...]
 
-    def get_guidance_score_func(self):
+    @property
+    def guidance_score_func(self) -> Callable[[Array, Array], Array]:
         batch_batch_observation_map = vmap(vmap(self.observation_map))
         estimate_h_x_0 = self.sde.get_estimate_x_0(self.observation_map)
         estimate_h_x_0_vmap = self.sde.get_estimate_x_0_vmap(self.observation_map)
@@ -327,21 +355,20 @@ class JacRev:
 
 
 @register_conditioning_method(ConditioningMethodName.JAC_FWD_GUIDANCE)
-class JacFwd:
+@dataclass
+class JacFwd(ConditioningMethod):
     """
     Uses full second moment approximation of the covariance of x_0|x_t.
 
     Computes using d_y jvps.
     """
 
-    def __init__(self, sde, observation_map, y, noise_std, shape):
-        self.sde = sde
-        self.observation_map = observation_map
-        self.y = y
-        self.noise_std = noise_std
-        self.shape = shape
+    observation_map: Callable[[Array], Array]
+    noise_std: float
+    shape: tuple[int, ...]
 
-    def get_guidance_score_func(self):
+    @property
+    def guidance_score_func(self) -> Callable[[Array, Array], Array]:
         batch_batch_observation_map = vmap(vmap(self.observation_map))
         estimate_h_x_0 = self.sde.get_estimate_x_0(self.observation_map)
         estimate_h_x_0_vmap = self.sde.get_estimate_x_0_vmap(self.observation_map)
@@ -369,19 +396,18 @@ class JacFwd:
 
 
 @register_conditioning_method(ConditioningMethodName.JAC_REV_GUIDANCE_DIAG)
-class JacRevDiagonal:
+@dataclass
+class JacRevDiagonal(ConditioningMethod):
     """Use a diagonal approximation to the variance inside the likelihood,
     This produces similar results when the covariance is approximately diagonal
     """
 
-    def __init__(self, sde, observation_map, y, noise_std, shape):
-        self.sde = sde
-        self.observation_map = observation_map
-        self.y = y
-        self.noise_std = noise_std
-        self.shape = shape
+    observation_map: Callable[[Array], Array]
+    noise_std: float
+    shape: tuple[int, ...]
 
-    def get_guidance_score_func(self):
+    @property
+    def guidance_score_func(self) -> Callable[[Array, Array], Array]:
         estimate_h_x_0 = self.sde.get_estimate_x_0(self.observation_map)
         batch_batch_observation_map = vmap(vmap(self.observation_map))
 
@@ -413,21 +439,20 @@ class JacRevDiagonal:
 
 
 @register_conditioning_method(ConditioningMethodName.VJP_GUIDANCE_DIAG)
-class VJPDiagonal:
+@dataclass
+class VJPDiagonal(ConditioningMethod):
     """
     Uses full second moment approximation of the covariance of x_0|x_t.
 
     Computes using H.shape[0] vjps.
     """
 
-    def __init__(self, sde, H, y, noise_std, shape):
-        self.sde = sde
-        self.H = H
-        self.y = y
-        self.noise_std = noise_std
-        self.shape = shape
+    H: Array
+    noise_std: float
+    shape: tuple[int, ...]
 
-    def get_guidance_score_func(self):
+    @property
+    def guidance_score_func(self) -> Callable[[Array, Array], Array]:
         # TODO: necessary to use shape here?
         estimate_x_0 = self.sde.get_estimate_x_0(lambda x: x, shape=(self.shape[0], -1))
         batch_H = jnp.transpose(jnp.tile(self.H, (self.shape[0], 1, 1)), axes=(1, 0, 2))
@@ -449,19 +474,18 @@ class VJPDiagonal:
 
 
 @register_conditioning_method(ConditioningMethodName.JAC_FWD_GUIDANCE_DIAG)
-class JacFwdDiagonal:
+@dataclass
+class JacFwdDiagonal(ConditioningMethod):
     """Use a diagonal approximation to the variance inside the likelihood,
     This produces similar results when the covariance is approximately diagonal
     """
 
-    def __init__(self, sde, observation_map, y, noise_std, shape):
-        self.sde = sde
-        self.observation_map = observation_map
-        self.y = y
-        self.noise_std = noise_std
-        self.shape = shape
+    observation_map: Callable[[Array], Array]
+    noise_std: float
+    shape: tuple[int, ...]
 
-    def get_guidance_score_func(self):
+    @property
+    def guidance_score_func(self) -> Callable[[Array, Array], Array]:
         batch_batch_observation_map = vmap(vmap(self.observation_map))
         estimate_h_x_0 = self.sde.get_estimate_x_0(self.observation_map)
         # axes tuple for correct permutation of grad_H_x_0 array

@@ -6,6 +6,7 @@ import yaml
 from pydantic import BaseModel
 
 from config import task
+from diffusionlib.conditioning_method import ConditioningMethodName
 
 
 class _TrainingConfig(BaseModel):
@@ -38,7 +39,7 @@ class _EvalConfig(BaseModel):
 
 
 class _SamplingConfig(BaseModel):
-    cs_method: str | None
+    cs_method: ConditioningMethodName
     noise_std: float
     denoise: bool
     innovation: bool

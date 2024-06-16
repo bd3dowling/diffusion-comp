@@ -1,14 +1,14 @@
 """All functions and modules related to model definition."""
+
 import functools
 from typing import Any
 
 import flax
 import jax
 import jax.numpy as jnp
-import numpy as np
 
-from diffusionlib.sde import VE, VP
-from diffusionlib.utils import batch_mul
+from diffusionlib._sde import VE, VP
+from diffusionlib.util.misc import batch_mul
 
 
 # The dataclass that stores all training states
@@ -47,24 +47,6 @@ def register_model(cls=None, *, name=None):
 
 def get_model(name):
     return _MODELS[name]
-
-
-def get_sigmas(config):
-    """Get sigmas --- the set of noise levels for SMLD from config files.
-    Args:
-      config: A ConfigDict object parsed from the config file
-    Returns:
-      sigmas: a jax numpy arrary of noise levels
-    """
-    sigmas = jnp.exp(
-        jnp.linspace(
-            jnp.log(config.model.sigma_max),
-            jnp.log(config.model.sigma_min),
-            config.model.num_scales,
-        )
-    )
-
-    return sigmas
 
 
 def init_model(rng, config, num_devices):
@@ -257,13 +239,3 @@ def get_score_fn(sde, model, params, states, train=False, continuous=False, retu
         raise NotImplementedError(f"SDE class {sde.__class__.__name__} not yet supported.")
 
     return score_fn
-
-
-def to_flattened_numpy(x):
-    """Flatten a JAX array `x` and convert it to numpy."""
-    return np.asarray(x.reshape((-1,)))
-
-
-def from_flattened_numpy(x, shape):
-    """Form a JAX array with the given `shape` from a flattened numpy array `x`."""
-    return jnp.asarray(x).reshape(shape)
