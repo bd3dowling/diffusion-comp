@@ -1,0 +1,9 @@
+[submodule "external/motionblur"]
+	path = external/motionblur
+	url = https://github.com/LeviBorodenko/motionblur
+[submodule "external/resizer"]
+	path = external/resizer
+	url = https://github.com/assafshocher/resizer
+[submodule "external/bkse"]
+	path = external/bkse
+	url = https://github.com/VinAIResearch/blur-kernel-space-exploring

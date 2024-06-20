@@ -1,0 +1,88 @@
+training:
+    batch_size: 16
+    n_iters: 2400001
+    snapshot_freq: 50000
+    log_epochs_freq: 10
+    log_step_freq: 8
+    eval_freq: 100
+    snapshot_freq_for_preemption: 5000
+    snapshot_sampling: true
+    likelihood_weighting: false
+    score_scaling: true
+    continuous: true
+    n_jitted_steps: 1
+    pmap: false
+    reduce_mean: true
+    pointwise_t: false
+    sde: vpsde
+    num_epochs: 4000
+
+sampling:
+    method: pc
+    predictor: reverse_diffusion
+    corrector: langevin
+    n_steps_each: 1
+    noise_removal: true
+    probability_flow: false
+    snr: 0.206  # A hyperparameter of the corrector
+    projection_sigma_rate: 1.586
+    cs_solver: projection
+    expansion: 4
+    coeff: 1.0
+    n_projections: 23
+    task: ct
+    lambd: 0.5
+    denoise_override: true
+    stack_samples: false
+    cs_method: kpsmldplus
+    noise_std: 0.1
+    denoise: true
+    innovation: true
+    inverse_scaler: null
+
+eval:
+    ckpt_id: 101
+    batch_size: 1
+    enable_sampling: true
+    num_samples: 50000
+    enable_loss: true
+    enable_bpd: false
+    bpd_dataset: test
+    pmap: true
+
+data:
+    image_size: 32
+    random_flip: true
+    uniform_dequantization: false
+    centered: false
+    num_channels: 1
+
+model:
+    name: mlp
+    sigma_max: 378.0
+    sigma_min: 0.01
+    num_scales: 1000
+    beta_min: 0.01
+    beta_max: 25.0
+    dropout: 0.0
+    embedding_type: fourier
+
+solver:
+    num_outer_steps: 1000
+    num_inner_steps: 1
+    outer_solver: EulerMaruyama
+    dt: null
+    epsilon: null
+    inner_solver: null
+    snr: null
+
+optim:
+    weight_decay: 0
+    optimizer: Adam
+    lr: 2e-4
+    beta1: 0.9
+    eps: 1e-8
+    warmup: 5000
+    grad_clip: 1.0
+
+seed: 42

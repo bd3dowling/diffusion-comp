@@ -1,0 +1,8 @@
+extends: default
+
+ignore: |
+  .venv/*
+  .github/*
+
+rules:
+  document-start: disable

@@ -1,0 +1,29 @@
+attention_type: _AttentionType
+attn_resolutions: list[int]
+beta_max: Annotated[float, Field(strict=True, gt=0)] = 1
+beta_min: Annotated[float, Field(strict=True, gt=0)] = 1
+ch_mult: list[int]
+conditional: bool
+conv_size: int
+dropout: Annotated[float, Field(strict=True, gt=0, lt=1)]
+ema_rate: Annotated[float, Field(strict=True, gt=0, lt=1)]
+embedding_type: _EmbeddingType
+fir: bool
+fir_kernel: list[int]
+fourier_scale: int = 0
+init_scale: float
+name: ModelName
+nf: int
+nonlinearity: _NonLinearity
+normalization: _Normalization
+num_res_blocks: int
+num_scales: int
+progressive: _Progressive
+progressive_combine: _ProgressiveCombine
+progressive_input: _ProgressiveInput
+resamp_with_conv: bool
+resblock_type: _ResblockType
+scale_by_sigma: bool
+sigma_max: Annotated[float, Field(strict=True, gt=0)] = 1
+sigma_min: Annotated[float, Field(strict=True, gt=0)] = 1
+skip_rescale: bool

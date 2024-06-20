@@ -1,0 +1,91 @@
+training:
+    sde: vpsde
+    n_iters: 4000
+    batch_size: 8
+    likelihood_weighting: false
+    score_scaling: true
+    reduce_mean: true
+    log_epoch_freq: 1
+    log_step_freq: 8000
+    pmap: false
+    n_jitted_steps: 1
+    snapshot_freq: 8000
+    snapshot_freq_for_preemption: 8000
+    eval_freq: 8000
+    continuous: true
+    pointwise_t: false
+
+eval:
+    batch_size: 1000
+    ckpt_id: 101
+    enable_sampling: true
+    num_samples: 50000
+    enable_loss: true
+    enable_bpd: false
+    bpd_dataset: test
+
+data:
+    image_size: 80
+    num_channels: null
+    random_flip: true
+    uniform_dequantization: false
+    centered: false
+
+model:
+    # for vp
+    beta_min: 0.1
+    beta_max: 25.0 # 200 also works, depends on time step size
+    # for ve
+    sigma_min: 0.01
+    sigma_max: 10.0
+    name: mlp
+    num_scales: 1000
+    dropout: 0.0
+    embedding_type: fourier
+
+optim:
+    optimizer: Adam
+    lr: 1.0e-3
+    warmup: false
+    weight_decay: false
+    grad_clip: null
+    seed: 2023
+    beta1: 0.9
+    eps: 1.0e-8
+
+sampling:
+    cs_method: pseudo_inverse_guidance
+    noise_std: 1.0
+    denoise: true # work out what denoise_override is
+    innovation: true # this will probably be superceded
+    inverse_scaler: null
+    stack_samples: false
+    method: pc
+    predictor: reverse_diffusion
+    corrector: langevin
+    n_steps_each: 1
+    noise_removal: true
+    probability_flow: false
+    snr: 0.206  # A hyperparameter of the corrector
+    projection_sigma_rate: 1.586
+    cs_solver: projection
+    expansion: 4
+    coeff: 1.0
+    n_projections: 23
+    task: ct
+    lambd: 0.5
+    denoise_override: true
+
+solver:
+    num_outer_steps: 1000
+    outer_solver: DDIMVP
+    eta: 1.0
+    inner_solver: null
+    stsl_scale_hyperparameter: 0.02
+    dps_scale_hyperparameter: 0.05
+    num_inner_steps: 1
+    dt: null
+    epsilon: null
+    snr: null
+
+seed: 42
