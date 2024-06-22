@@ -4,17 +4,14 @@ from functools import partial
 from typing import Any
 
 import jax.numpy as jnp
-import jax.random as random
 import matplotlib.animation as animation
 import matplotlib.pyplot as plt
 import numpy as np
-import scipy
 import seaborn as sns
 from jax import jit, vmap
 from jaxtyping import Array
 from matplotlib.animation import FuncAnimation
 from matplotlib.image import AxesImage
-from scipy.stats import wasserstein_distance
 
 CM = sns.color_palette("mako_r", as_cmap=True)
 BG_ALPHA = 1.0

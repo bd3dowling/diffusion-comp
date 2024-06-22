@@ -206,8 +206,9 @@ class DDIMVP(Sampler):
         self, carry: tuple[PRNGKeyArray, Array, Array], outer_t: Array
     ) -> tuple[tuple[PRNGKeyArray, Array, Array], Array]:
         rng, x, x_mean = carry
-        vec_t = jnp.full(self.shape[0], outer_t)
         rng, step_rng = random.split(rng)
+
+        vec_t = jnp.full(self.shape[0], outer_t)
         x, x_mean = self._update(step_rng, x, vec_t)
 
         return ((rng, x, x_mean), x_mean) if self.denoise else ((rng, x, x_mean), x)
@@ -219,6 +220,7 @@ class DDIMVP(Sampler):
         return x, x_mean
 
     def _posterior(self, x: Array, t: Array) -> tuple[Array, Array]:
+        """Get parameters for $p(x_{t-1} \mid x_t)$"""
         epsilon = self.model(x, t)
         timestep = get_timestep(t, self.ts[0], self.ts[-1], self.num_steps)
         m = self.sqrt_alphas_cumprod[timestep]

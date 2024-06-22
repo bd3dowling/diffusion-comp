@@ -40,6 +40,7 @@ jax = {extras = ["cuda12"], version = "^0.4.28"}
 torch = {version = "^2.3.1", optional = true}
 torchvision = {version = "^0.18.1", optional = true}
 torchaudio = {version = "^2.3.1", optional = true}
+particles = {extras = ["extra"], version = "^0.4"}
 
 [tool.poetry.extras]
 cuda = ["jax", "torch", "torchvision", "torchaudio"] 
