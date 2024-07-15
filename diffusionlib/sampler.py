@@ -4,8 +4,11 @@ from enum import StrEnum, auto
 from typing import Any, Callable
 
 import jax.numpy as jnp
+import numpy as np
 from jax import lax, random, vmap
 from jaxtyping import Array, PRNGKeyArray
+from particles.core import SMC, FeynmanKac
+from particles.state_space_models import StateSpaceModel
 
 from diffusionlib.solver import NoneSolver, Solver, SolverName, get_solver
 from diffusionlib.util.misc import (
@@ -26,6 +29,7 @@ class SamplerName(StrEnum):
     PREDICTOR_CORRECTOR = auto()
     DDIM_VP = auto()
     DDIM_VE = auto()
+    SMC_SAMPLER = auto()
 
 
 def register_sampler(name: SamplerName):
@@ -152,6 +156,7 @@ class PCSampler(Sampler):
         return self.inner_solver.ts
 
 
+@register_sampler(name=SamplerName.DDIM_VP)
 @dataclass(kw_only=True)
 class DDIMVP(Sampler):
     """DDIM Markov chain. For the DDPM Markov Chain or VP SDE."""
@@ -220,7 +225,7 @@ class DDIMVP(Sampler):
         return x, x_mean
 
     def _posterior(self, x: Array, t: Array) -> tuple[Array, Array]:
-        """Get parameters for $p(x_{t-1} \mid x_t)$"""
+        """Get parameters for $p(x_{t-1} \\mid x_t)$"""
         epsilon = self.model(x, t)
         timestep = get_timestep(t, self.ts[0], self.ts[-1], self.num_steps)
         m = self.sqrt_alphas_cumprod[timestep]
@@ -254,3 +259,36 @@ class DDIMVP(Sampler):
             return batch_observation_map(x_0), (epsilon, x_0)
 
         return estimate_x_0
+
+
+@register_sampler(name=SamplerName.SMC_SAMPLER)
+@dataclass(kw_only=True)
+class SMCGuided(Sampler):
+    num_steps: int = 1000
+    ssm: StateSpaceModel
+    fk_model: FeynmanKac
+    num_particles: int = 1000
+    essr_min: float
+    resampling: str = "systematic"
+    smc: SMC = field(init=False)
+    particle_history: Array = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.smc = SMC(
+            fk=self.fk_model,
+            N=self.num_particles,
+            ESSrmin=self.essr_min,
+            resampling=self.resampling,
+            store_history=True,
+        )
+
+
+    def sample(self, rng: PRNGKeyArray, x_0: Array | None = None) -> Array:
+        rng, sub_rng = random.split(rng)
+        np.random.seed(sub_rng[0])
+
+        self.smc.run()
+        final_particles: Array = self.smc.X
+        self.particle_history = self.smc.hist.X
+
+        return final_particles

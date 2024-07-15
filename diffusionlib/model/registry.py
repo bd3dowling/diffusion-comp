@@ -7,7 +7,7 @@ import flax
 import jax
 import jax.numpy as jnp
 
-from diffusionlib._sde import VE, VP
+from diffusionlib.sde import VE, VP
 from diffusionlib.util.misc import batch_mul
 
 
