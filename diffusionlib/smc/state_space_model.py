@@ -37,8 +37,25 @@ class SimpleObservationSSM(StateSpaceModel):
     def PY(self, t, xp, x):
         return dists.MvNormal(loc=x @ self.a.T, cov=self.sigma_y)
 
+
+class FPSSSM(SimpleObservationSSM):
+    def __init__(self, sampler: DDIMVP, dim_x: int, a: Array, sigma_y: Array, c_t, **kwargs: Any):
+        super().__init__(sampler, dim_x, a, sigma_y, **kwargs)
+        self.c_t = c_t
+
     def proposal0(self, data):
         return self.PX0()
 
     def proposal(self, t, xp, data):
-        return self.PX(t, xp)
+        vec_t = jnp.full(xp.shape[0], self.sampler.ts[-t])
+        x_mean, std = self.sampler.posterior(xp, vec_t)
+
+        Sigma_term_1 = (1 / std) * jnp.eye(self.a.shape[1])
+        Sigma_term_2 = (1 / (self.sigma_y**2 * self.c_t(t)**2)) * (self.a.T @ self.a)
+        Sigma_star = jnp.linalg.inv(Sigma_term_1 + Sigma_term_2)
+
+        mu_term_1 = (1 / std) * x_mean
+        mu_term_2 = (1 / (self.sigma_y**2 * self.c_t(t)**2)) * (self.a.T @ data)
+        mu_star = Sigma_star @ (mu_term_1 + mu_term_2)
+
+        return dists.MvNormal(loc=mu_star, cov=Sigma_star)

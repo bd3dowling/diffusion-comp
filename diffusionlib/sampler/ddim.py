@@ -52,6 +52,8 @@ class DDIMVP(Sampler):
         else:
             assert x_0.shape == self.shape
 
+        print(self.ts.shape)
+
         x = x_0
         (_, x, x_mean), xs = lax.scan(self._step, (rng, x, x), self.ts, reverse=True)
 
@@ -72,6 +74,7 @@ class DDIMVP(Sampler):
         rng, x, x_mean = carry
         rng, step_rng = random.split(rng)
 
+        # vec_t = jnp.full((self.shape[0], 1), outer_t)
         vec_t = jnp.full(self.shape[0], outer_t)
         x, x_mean = self._update(step_rng, x, vec_t)
 
@@ -85,6 +88,7 @@ class DDIMVP(Sampler):
 
     def posterior(self, x: Array, t: Array) -> tuple[Array, Array]:
         """Get parameters for $p(x_{t-1} \\mid x_t)$"""
+        # EQ D.3 in DDIM paper
         epsilon = self.model(x, t)
         timestep = get_timestep(t, self.ts[0], self.ts[-1], self.num_steps)
         m = self.sqrt_alphas_cumprod[timestep]
