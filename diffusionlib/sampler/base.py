@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from enum import StrEnum, auto
+from typing import Any
 
 from jaxtyping import Array, PRNGKeyArray
 
@@ -13,7 +14,8 @@ class SamplerName(StrEnum):
     PREDICTOR_CORRECTOR = auto()
     DDIM_VP = auto()
     DDIM_VE = auto()
-    SMC = auto()
+    SMC_DIFF_OPT = auto()
+    MCG_DIFF = auto()
 
 
 def register_sampler(name: SamplerName):
@@ -34,5 +36,7 @@ def get_sampler(name: SamplerName, **kwargs) -> "Sampler":
 
 class Sampler(ABC):
     @abstractmethod
-    def sample(self, rng: PRNGKeyArray, x_0: Array | None = None) -> Array:
+    def sample(
+        self, rng: PRNGKeyArray, x_0: Array | None = None, y: Array | None = None, **kwargs: Any
+    ) -> Array:
         raise NotImplementedError

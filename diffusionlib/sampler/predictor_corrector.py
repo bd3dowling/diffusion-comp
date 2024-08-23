@@ -55,7 +55,7 @@ class PCSampler(Sampler):
     def num_function_evaluations(self) -> int:
         return jnp.size(self._outer_ts) * (jnp.size(self._inner_ts) + 1)
 
-    def sample(self, rng: PRNGKeyArray, x_0: Array | None = None) -> Array:
+    def sample(self, rng: PRNGKeyArray, x_0: Array | None = None, y: Array | None = None, **kwargs: Any) -> Array:
         rng, step_rng = random.split(rng)
 
         if x_0 is None:

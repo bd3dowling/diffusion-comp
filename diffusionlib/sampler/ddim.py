@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Callable
+from typing import Any, Callable
 
 import jax.numpy as jnp
 from jax import lax, random, vmap
@@ -44,15 +44,15 @@ class DDIMVP(Sampler):
         self.sqrt_alphas_cumprod_prev = jnp.sqrt(self.alphas_cumprod_prev)
         self.sqrt_1m_alphas_cumprod_prev = jnp.sqrt(1.0 - self.alphas_cumprod_prev)
 
-    def sample(self, rng: PRNGKeyArray, x_0: Array | None = None) -> Array:
+    def sample(
+        self, rng: PRNGKeyArray, x_0: Array | None = None, y: Array | None = None, **kwargs: Any
+    ) -> Array:
         rng, step_rng = random.split(rng)
 
         if x_0 is None:
             x_0 = self.prior_sampling(step_rng, self.shape)
         else:
             assert x_0.shape == self.shape
-
-        print(self.ts.shape)
 
         x = x_0
         (_, x, x_mean), xs = lax.scan(self._step, (rng, x, x), self.ts, reverse=True)
